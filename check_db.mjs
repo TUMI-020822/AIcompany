@@ -1,0 +1,14 @@
+import initSqlJs from 'sql.js';
+import fs from 'fs';
+const SQL = await initSqlJs();
+const buf = fs.readFileSync('./data/ai-agency.db');
+const db = new SQL.Database(buf);
+const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+console.log('Tables:', JSON.stringify(tables));
+const companies = db.exec('SELECT id, name FROM companies');
+console.log('Companies:', JSON.stringify(companies));
+const catalog = db.exec('SELECT count(*) FROM agents_catalog');
+console.log('Catalog count:', JSON.stringify(catalog));
+const employees = db.exec('SELECT count(*) FROM company_employees');
+console.log('Employees count:', JSON.stringify(employees));
+db.close();

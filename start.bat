@@ -73,6 +73,14 @@ if not exist packages\server\dist\index.js (
         pause
         exit /b 1
     )
+) else if not exist packages\web\dist\index.html (
+    echo 🔨 前端未构建，正在构建...
+    call npm run build -w packages/web
+    if errorlevel 1 (
+        echo ❌ 前端构建失败
+        pause
+        exit /b 1
+    )
 ) else (
     echo ✅ 项目已构建
 )
@@ -81,12 +89,20 @@ REM 启动服务
 echo.
 echo [5/5] 启动服务...
 echo.
-echo ════════════════════════════════════════════════════════════
-echo   后端服务: http://localhost:3000
-echo   前端页面: http://localhost:3000 (已集成)
-echo ════════════════════════════════════════════════════════════
+echo ╔════════════════════════════════════════════════════════════╗
+echo ║                                                            ║
+echo ║   🌐 访问地址: http://localhost:3000                       ║
+echo ║                                                            ║
+echo ║   📖 API 文档:  http://localhost:3000/api/health           ║
+echo ║                                                            ║
+echo ╚════════════════════════════════════════════════════════════╝
+echo.
+echo 💡 提示: 浏览器将自动打开，如未打开请手动访问上述地址
 echo.
 echo 按 Ctrl+C 停止服务
 echo.
+
+REM 延迟 3 秒后打开浏览器
+start "" cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:3000"
 
 call npm start

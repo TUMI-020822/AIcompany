@@ -42,16 +42,23 @@ const WorkbenchPage: React.FC = () => {
   const subscribedTaskRef = useRef<string | null>(null);
 
   const company = currentCompany;
-  if (!company) return null;
 
-  // Load task history on mount
+  // Load task history on mount — MUST be before early return
   useEffect(() => {
+    if (!company) return;
     loadTasks();
-  }, [company.id]);
+  }, [company?.id]);
 
-  // Socket.IO subscriptions
+  // Socket.IO subscriptions — MUST be before early return
   useEffect(() => {
-    const socket = getSocket();
+    if (!company) return;
+    let socket: any;
+    try {
+      socket = getSocket();
+    } catch (err) {
+      console.warn('[WorkbenchPage] Failed to init socket:', err);
+      return;
+    }
 
     const onDAGUpdate = (dag: TaskDAG) => {
       setActiveDAG(dag);
@@ -82,19 +89,21 @@ const WorkbenchPage: React.FC = () => {
       socket.off('task:dag-update', onDAGUpdate);
       socket.off('task:step-update', onStepUpdate);
       socket.off('task:progress', onProgress);
-      // Unsubscribe from task room
       if (subscribedTaskRef.current) {
         socket.emit('task:unsubscribe', subscribedTaskRef.current);
       }
     };
-  }, []);
+  }, [company]);
 
-  // Auto-scroll progress log
+  // Auto-scroll progress log — MUST be before early return
   useEffect(() => {
     if (progressRef.current) {
       progressRef.current.scrollTop = progressRef.current.scrollHeight;
     }
   }, [taskProgress]);
+
+  // Early return AFTER all hooks
+  if (!company) return null;
 
   const handleLaunchTask = async () => {
     const name = taskName.trim();

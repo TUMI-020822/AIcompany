@@ -34,9 +34,8 @@ const ChatPage: React.FC = () => {
   const socketRef = useRef<ReturnType<typeof api.getSocket> | null>(null);
 
   const company = currentCompany;
-  if (!company) return null;
 
-  // Build agent lookup from catalog
+  // Build agent lookup from catalog (safe even when company is null)
   const agentMap: Record<string, Agent> = {};
   catalogAgents.forEach((a: any) => {
     agentMap[a.id] = {
@@ -49,9 +48,9 @@ const ChatPage: React.FC = () => {
     };
   });
 
-  const employees = (company.employees || [])
+  const employees = company ? (company.employees || [])
     .map((eid) => agentMap[eid])
-    .filter(Boolean) as Agent[];
+    .filter(Boolean) as Agent[] : [];
 
   // Build chat list from hired agents
   const chats: Conversation[] = [];
@@ -70,30 +69,32 @@ const ChatPage: React.FC = () => {
   }
 
   const activeChat = currentChat || (chats.length > 0 ? chats[0].id : null);
-  useEffect(() => {
-    if (!currentChat && chats.length > 0) {
-      setCurrentChat(chats[0].id);
-    }
-  }, [currentChat, chats.length, setCurrentChat]);
-
-  const chatKey = company.id + '_' + activeChat;
+  const chatKey = company ? company.id + '_' + activeChat : '';
   const currentMessages = messages[chatKey] || [];
   const activeChatData = chats.find((c) => c.id === activeChat);
 
-  // Setup Socket.IO
   useEffect(() => {
-    const socket = api.getSocket();
-    socketRef.current = socket;
+    if (!company || !currentChat && chats.length > 0) {
+      setCurrentChat(chats[0].id);
+    }
+  }, [currentChat, chats.length, setCurrentChat, company]);
+
+  useEffect(() => {
+    if (!company) return;
+    let socket: any;
+    try {
+      socket = api.getSocket();
+      socketRef.current = socket;
+    } catch (err) {
+      console.warn('[ChatPage] Failed to init socket:', err);
+      return;
+    }
 
     socket.on('message_token', (data: { conversationId: string; token: string }) => {
-      // Find the chat key for this conversation
-      const convId = data.conversationId;
-      // We'll update streaming text via ref
       setStreamingText((prev) => prev + data.token);
     });
 
     socket.on('message_complete', (data: { conversationId: string; userMessage: any; assistantMessage: any }) => {
-      // Find which chatKey maps to this conversationId
       const entries = Object.entries(conversationMapRef.current);
       let matchedKey = '';
       for (const [key, cid] of entries) {
@@ -103,13 +104,10 @@ const ChatPage: React.FC = () => {
         }
       }
       if (matchedKey) {
-        // Get agent info
         const agentId = data.assistantMessage.agentId;
         const agent = agentMap[agentId];
-        // Replace the streaming placeholder message
         const store = useStore.getState();
         const msgs = store.messages[matchedKey] || [];
-        // Remove the last typing message if present
         const filtered = msgs.filter((m) => !m.typing);
         filtered.push({
           self: false,
@@ -125,13 +123,12 @@ const ChatPage: React.FC = () => {
     });
 
     socket.on('agent_typing', (data: { conversationId: string; typing: boolean }) => {
-      // Handled via sending state
     });
 
     socket.on('error', (data: { message: string }) => {
       setSending(false);
       setStreamingText('');
-      addToast(data.message || '\u53D1\u9001\u5931\u8D25', 'error');
+      addToast(data.message || '发送失败', 'error');
     });
 
     return () => {
@@ -140,26 +137,26 @@ const ChatPage: React.FC = () => {
       socket.off('agent_typing');
       socket.off('error');
     };
-  }, []);
+  }, [company]);
 
-  // Update streaming message in real time
   useEffect(() => {
-    if (!streamingText || !sending) return;
+    if (!company || !streamingText || !sending) return;
     const store = useStore.getState();
     const msgs = store.messages[chatKey] || [];
-    // Check if last message is typing placeholder
     const last = msgs[msgs.length - 1];
     if (last && last.typing) {
       store.updateLastMessage(chatKey, streamingText);
     }
-  }, [streamingText, chatKey, sending]);
+  }, [streamingText, chatKey, sending, company]);
 
-  // Scroll to bottom
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
   }, [currentMessages.length, streamingText]);
+
+  // Early return AFTER all hooks
+  if (!company) return null;
 
   const ensureConversation = async (chatId: string): Promise<string | null> => {
     // Check if we already have a conversation ID for this chat
@@ -211,7 +208,7 @@ const ChatPage: React.FC = () => {
 
     // Add typing placeholder
     const agentId = activeChat.replace('agent_', '');
-    const agent = agentMap[agentId];
+    const agent = agentMap[agentId] || null;
     addMessage(chatKey, {
       self: false,
       sender: agent?.name || 'AI',

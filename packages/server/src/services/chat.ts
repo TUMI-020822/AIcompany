@@ -10,6 +10,9 @@ import {
 } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { createProvider, type ProviderId } from './llm/registry.js';
+import { createLangChainService } from './llm/langchain.js';
+// import { createRAGService } from './rag.js';
+import { createLangChainTools } from './tools/langchain-tools.js';
 import type { ChatMessage } from './llm/provider.js';
 import { mcpManager } from './mcp/manager.js';
 import { executeSkill } from './skills/executor.js';
@@ -252,32 +255,31 @@ export async function sendMessage(options: SendMessageOptions): Promise<ChatResp
     ...history,
   ];
 
-  // Create LLM provider
-  const llm = createProvider(ctx.provider as ProviderId, {
-    apiKey: ctx.apiKey,
-    baseUrl: ctx.baseUrl || undefined,
-    model: ctx.agentConfig.model as string | undefined,
-  });
+  // Create LangChain tools
+  const langchainTools = createLangChainTools(mcpServers, skills);
 
-  const llmOptions = {
-    model: (ctx.agentConfig.model as string) || '',
+  // Create LangChain service
+  const langchainService = createLangChainService({
+    provider: ctx.provider,
+    apiKey: ctx.apiKey,
+    model: (ctx.agentConfig.model as string) || 'gpt-4',
     temperature: (ctx.agentConfig.temperature as number) || 0.7,
     maxTokens: (ctx.agentConfig.maxTokens as number) || 4096,
-  };
+  });
 
   let responseContent = '';
   const maxToolLoops = 3;
   let toolLoop = 0;
 
-  // Initial LLM call
+  // Initial LLM call using LangChain
   if (onToken) {
-    const stream = llm.chatStream({ ...llmOptions, messages, stream: true });
+    const stream = await langchainService.chatStream({ messages, stream: true });
     for await (const token of stream) {
       responseContent += token;
       onToken(token);
     }
   } else {
-    responseContent = await llm.chat({ ...llmOptions, messages });
+    responseContent = await langchainService.chat({ messages });
   }
 
   // Tool-use loop: check for tool calls, execute, and re-prompt
@@ -301,13 +303,13 @@ export async function sendMessage(options: SendMessageOptions): Promise<ChatResp
 
     let continuation = '';
     if (onToken) {
-      const stream = llm.chatStream({ ...llmOptions, messages: continuationMessages, stream: true });
+      const stream = await langchainService.chatStream({ messages: continuationMessages, stream: true });
       for await (const token of stream) {
         continuation += token;
         onToken(token);
       }
     } else {
-      continuation = await llm.chat({ ...llmOptions, messages: continuationMessages });
+      continuation = await langchainService.chat({ messages: continuationMessages });
     }
 
     responseContent = responseContent + '\n\n' + continuation;

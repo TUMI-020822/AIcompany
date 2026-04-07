@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../../store';
 import { DEPT_COLORS, PROVIDERS } from '../../types';
 import type { Agent } from '../../types';
 import { ChevronIcon, ContactsIcon } from '../shared/Icons';
+import * as api from '../../services/api';
 
 const ContactsPage: React.FC = () => {
   const currentCompany = useStore((s) => s.currentCompany);
@@ -10,6 +11,10 @@ const ContactsPage: React.FC = () => {
   const expandedDepts = useStore((s) => s.expandedDepts);
   const toggleDeptExpand = useStore((s) => s.toggleDeptExpand);
   const setProfileDrawerAgent = useStore((s) => s.setProfileDrawerAgent);
+  const updateCompany = useStore((s) => s.updateCompany);
+  const addToast = useStore((s) => s.addToast);
+  const [fireTarget, setFireTarget] = useState<string | null>(null);
+  const [firing, setFiring] = useState(false);
 
   const company = currentCompany;
   if (!company) return null;
@@ -36,6 +41,28 @@ const ContactsPage: React.FC = () => {
     if (!grouped[agent.dept]) grouped[agent.dept] = [];
     grouped[agent.dept].push(agent);
   });
+
+  const handleFire = async (agent: Agent) => {
+    if (!currentCompany || firing) return;
+    setFiring(true);
+    try {
+      await api.fireAgent(currentCompany.id, agent.id);
+      const updatedEmployees = currentCompany.employees.filter(id => id !== agent.id);
+      const updatedConfigs = { ...currentCompany.employeeConfigs };
+      delete updatedConfigs[agent.id];
+      updateCompany({
+        ...currentCompany,
+        employees: updatedEmployees,
+        employeeConfigs: updatedConfigs
+      });
+      addToast(`已解雇 ${agent.name}`, 'warning');
+    } catch (err: any) {
+      addToast(`解雇失败: ${err.message}`, 'error');
+    } finally {
+      setFiring(false);
+      setFireTarget(null);
+    }
+  };
 
   return (
     <>
@@ -88,6 +115,11 @@ const ContactsPage: React.FC = () => {
                               <span className="org-member-name">{agent.name}</span>
                               <span className="org-member-role">{roleText}</span>
                               <div className="org-member-status" />
+                              <div
+                                className="org-member-fire"
+                                onClick={(e) => { e.stopPropagation(); setFireTarget(agent.id); }}
+                                title="解雇"
+                              >✕</div>
                             </div>
                           );
                         })}
@@ -100,6 +132,27 @@ const ContactsPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* 解雇确认对话框 */}
+      {fireTarget && (() => {
+        const targetAgent = employees.find(a => a.id === fireTarget);
+        if (!targetAgent) return null;
+        return (
+          <div className="fire-confirm-overlay" onClick={() => setFireTarget(null)}>
+            <div className="fire-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+              <h3>确认解雇</h3>
+              <p>确定要解雇 <strong>{targetAgent.name}</strong> 吗？</p>
+              <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>此操作将移除该员工的所有配置和对话记录。</p>
+              <div className="fire-confirm-actions">
+                <button className="btn-secondary" onClick={() => setFireTarget(null)}>取消</button>
+                <button className="btn-danger" onClick={() => handleFire(targetAgent)} style={{ background: '#ff3b30', color: '#fff' }} disabled={firing}>
+                  {firing ? '处理中...' : '确认解雇'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 };

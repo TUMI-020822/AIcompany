@@ -1,0 +1,93 @@
+import { ChatOpenAI } from '@langchain/openai';
+import { Chroma } from '@langchain/community/vectorstores/chroma';
+import { OpenAIEmbeddings } from '@langchain/openai';
+import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import { createStuffDocumentsChain } from 'langchain/chains/combine_documents';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { RunnableSequence } from '@langchain/core/runnables';
+
+interface RAGOptions {
+  apiKey: string;
+  model?: string;
+  embeddingModel?: string;
+  chromaUrl?: string;
+}
+
+export class RAGService {
+  private llm: ChatOpenAI;
+  private embeddings: OpenAIEmbeddings;
+  private vectorStore: Chroma;
+  private options: RAGOptions;
+
+  constructor(options: RAGOptions) {
+    this.options = options;
+    this.llm = new ChatOpenAI({
+      apiKey: options.apiKey,
+      model: options.model || 'gpt-4',
+    });
+    this.embeddings = new OpenAIEmbeddings({
+      apiKey: options.apiKey,
+      model: options.embeddingModel || 'text-embedding-3-small',
+    });
+    this.vectorStore = new Chroma(this.embeddings, {
+      url: options.chromaUrl || 'http://localhost:8000',
+    });
+  }
+
+  // Add documents to the vector store
+  async addDocuments(documents: string[], collectionName: string = 'default') {
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1000,
+      chunkOverlap: 200,
+    });
+
+    const chunks = await splitter.createDocuments(documents);
+    await this.vectorStore.addDocuments(chunks, { collectionName });
+  }
+
+  // Query the RAG system
+  async query(question: string, collectionName: string = 'default', k: number = 5) {
+    // Create a retrieval chain
+    const retriever = this.vectorStore.asRetriever({
+      k,
+      filter: { collectionName },
+    });
+
+    // Create a prompt for the RAG chain
+    const prompt = ChatPromptTemplate.fromTemplate(`
+      You are a helpful assistant. Use the following context to answer the question.
+      If you don't know the answer, say you don't know. Don't make up information.
+
+      Context:
+      {context}
+
+      Question:
+      {question}
+    `);
+
+    // Create the combine documents chain
+    const combineDocsChain = createStuffDocumentsChain({ llm: this.llm, prompt });
+
+    // Create the RAG chain
+    const ragChain = RunnableSequence.from([
+      {
+        context: retriever,
+        question: (input: { question: string }) => input.question,
+      },
+      combineDocsChain,
+    ]);
+
+    // Execute the chain
+    const result = await ragChain.invoke({ question });
+    return result;
+  }
+
+  // Clear a collection
+  async clearCollection(collectionName: string = 'default') {
+    await this.vectorStore.delete({ filter: { collectionName } });
+  }
+}
+
+export function createRAGService(options: RAGOptions): RAGService {
+  return new RAGService(options);
+}
