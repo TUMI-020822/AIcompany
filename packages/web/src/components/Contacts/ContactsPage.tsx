@@ -1,11 +1,12 @@
 import React from 'react';
 import { useStore } from '../../store';
-import { AGENTS_DB, DEPT_COLORS, PROVIDERS } from '../../types';
+import { DEPT_COLORS, PROVIDERS } from '../../types';
 import type { Agent } from '../../types';
 import { ChevronIcon, ContactsIcon } from '../shared/Icons';
 
 const ContactsPage: React.FC = () => {
   const currentCompany = useStore((s) => s.currentCompany);
+  const catalogAgents = useStore((s) => s.catalogAgents);
   const expandedDepts = useStore((s) => s.expandedDepts);
   const toggleDeptExpand = useStore((s) => s.toggleDeptExpand);
   const setProfileDrawerAgent = useStore((s) => s.setProfileDrawerAgent);
@@ -13,8 +14,21 @@ const ContactsPage: React.FC = () => {
   const company = currentCompany;
   if (!company) return null;
 
+  // Build agent lookup from catalog
+  const agentMap: Record<string, Agent> = {};
+  catalogAgents.forEach((a: any) => {
+    agentMap[a.id] = {
+      id: a.id,
+      name: a.name,
+      dept: a.dept,
+      desc: a.description || a.desc || '',
+      tags: a.tags || [],
+      role: a.role || '',
+    };
+  });
+
   const employees = (company.employees || [])
-    .map((eid) => AGENTS_DB.find((a) => a.id === eid))
+    .map((eid) => agentMap[eid])
     .filter(Boolean) as Agent[];
 
   const grouped: Record<string, Agent[]> = {};

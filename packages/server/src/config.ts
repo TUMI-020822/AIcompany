@@ -20,7 +20,7 @@ export interface AppConfig {
 }
 
 export const config: AppConfig = {
-  PORT: parseInt(process.env.PORT || '3001', 10),
+  PORT: parseInt(process.env.PORT || '3000', 10),
   DB_PATH: process.env.DB_PATH || path.resolve(__dirname, '../data/agency.db'),
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'default-dev-key-change-in-production-32b!',
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || '',

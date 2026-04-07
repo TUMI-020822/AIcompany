@@ -1,20 +1,22 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../store';
 import { AGENTS_DB, DEPT_COLORS, PROVIDERS, AVAILABLE_SKILLS } from '../../types';
+import type { Agent } from '../../types';
 import { CloseIcon, SearchIcon } from '../shared/Icons';
 
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
-  if (diff < 60000) return '刚刚';
-  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
-  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
-  return Math.floor(diff / 86400000) + '天前';
+  if (diff < 60000) return '\u521A\u521A';
+  if (diff < 3600000) return Math.floor(diff / 60000) + '\u5206\u949F\u524D';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + '\u5C0F\u65F6\u524D';
+  return Math.floor(diff / 86400000) + '\u5929\u524D';
 }
 
 const AgentProfileDrawer: React.FC = () => {
   const agentId = useStore((s) => s.profileDrawerAgent);
   const setProfileDrawerAgent = useStore((s) => s.setProfileDrawerAgent);
   const currentCompany = useStore((s) => s.currentCompany);
+  const catalogAgents = useStore((s) => s.catalogAgents);
   const setCurrentChat = useStore((s) => s.setCurrentChat);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const setConfigModalAgent = useStore((s) => s.setConfigModalAgent);
@@ -23,7 +25,11 @@ const AgentProfileDrawer: React.FC = () => {
 
   if (!agentId || !currentCompany) return null;
 
-  const agent = AGENTS_DB.find((a) => a.id === agentId);
+  // Look up from catalog first, then fall back to AGENTS_DB
+  const catalogAgent = catalogAgents.find((a: any) => a.id === agentId);
+  const agent: Agent | undefined = catalogAgent
+    ? { id: catalogAgent.id, name: catalogAgent.name, dept: catalogAgent.dept, desc: catalogAgent.description || '', tags: catalogAgent.tags || [], role: catalogAgent.role || '' }
+    : AGENTS_DB.find((a) => a.id === agentId);
   if (!agent) return null;
 
   const cfg = (currentCompany.employeeConfigs || {})[agentId] || {} as any;

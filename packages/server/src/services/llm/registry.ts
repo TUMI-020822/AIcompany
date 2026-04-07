@@ -174,7 +174,7 @@ const DEFAULT_MODELS: Record<ProviderId, string> = {
 };
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
-  deepseek: 'https://api.deepseek.com',
+  deepseek: 'https://api.deepseek.com/v1',
   openai: 'https://api.openai.com/v1',
   ollama: 'http://localhost:11434/v1',
 };

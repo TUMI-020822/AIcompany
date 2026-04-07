@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
 import Modal from '../shared/Modal';
+import * as api from '../../services/api';
 import type { Company } from '../../types';
 
 const INDUSTRIES = [
@@ -17,29 +18,42 @@ const CreateCompanyModal: React.FC<Props> = ({ onClose }) => {
   const [name, setName] = useState('');
   const [industry, setIndustry] = useState(INDUSTRIES[0]);
   const [desc, setDesc] = useState('');
+  const [creating, setCreating] = useState(false);
   const addCompany = useStore((s) => s.addCompany);
   const addToast = useStore((s) => s.addToast);
   const navigate = useNavigate();
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       addToast('请输入公司名称', 'error');
       return;
     }
-    const company: Company = {
-      id: 'co_' + Date.now(),
-      name: trimmed,
-      industry,
-      desc: desc.trim(),
-      created: Date.now(),
-      employees: [],
-      tasks: [],
-      employeeConfigs: {},
-    };
-    addCompany(company);
-    onClose();
-    navigate(`/company/${company.id}`);
+    setCreating(true);
+    try {
+      const result = await api.createCompany({
+        name: trimmed,
+        industry,
+        description: desc.trim(),
+      });
+      const company: Company = {
+        id: result.id,
+        name: result.name,
+        industry: result.industry || '',
+        desc: result.description || '',
+        created: new Date(result.createdAt).getTime(),
+        employees: [],
+        tasks: [],
+        employeeConfigs: {},
+      };
+      addCompany(company);
+      onClose();
+      navigate(`/company/${company.id}`);
+    } catch (err) {
+      addToast('创建公司失败: ' + (err instanceof Error ? err.message : String(err)), 'error');
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -71,8 +85,10 @@ const CreateCompanyModal: React.FC<Props> = ({ onClose }) => {
         />
       </div>
       <div className="modal-actions">
-        <button className="btn-secondary" onClick={onClose}>取消</button>
-        <button className="btn-primary" onClick={handleCreate}>创建公司</button>
+        <button className="btn-secondary" onClick={onClose} disabled={creating}>取消</button>
+        <button className="btn-primary" onClick={handleCreate} disabled={creating}>
+          {creating ? '创建中...' : '创建公司'}
+        </button>
       </div>
     </Modal>
   );

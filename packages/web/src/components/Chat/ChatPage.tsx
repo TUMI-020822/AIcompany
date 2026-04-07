@@ -1,68 +1,71 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useStore } from '../../store';
-import { AGENTS_DB, DEPT_COLORS } from '../../types';
+import { DEPT_COLORS } from '../../types';
 import type { Agent, Conversation, Message } from '../../types';
 import { SearchIcon, SendIcon, HireIcon, SettingsIcon } from '../shared/Icons';
 import MessageBubble from './MessageBubble';
+import * as api from '../../services/api';
 
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
-  if (diff < 60000) return '刚刚';
-  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
-  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
-  return Math.floor(diff / 86400000) + '天前';
+  if (diff < 60000) return '\u521A\u521A';
+  if (diff < 3600000) return Math.floor(diff / 60000) + '\u5206\u949F\u524D';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + '\u5C0F\u65F6\u524D';
+  return Math.floor(diff / 86400000) + '\u5929\u524D';
 }
-
-const DEPT_RESPONSES: Record<string, string[]> = {
-  '产品部': [
-    '收到，我来从产品角度分析一下这个需求。首先需要明确目标用户群体和核心场景，然后梳理功能优先级。我建议先做MVP验证，按P0/P1/P2划分需求优先级。',
-    '这个方向很有潜力。我初步梳理了用户故事地图，建议先围绕核心链路做深度打磨。',
-  ],
-  '工程部': [
-    '从技术实现角度评估了一下，建议采用微服务架构。预计需要3个核心服务模块，我先出架构设计文档。',
-    '技术方案我初步评估了可行性。有几个关键技术选型需要讨论。',
-  ],
-  '设计部': [
-    '设计侧我来负责。先做用户调研和竞品UI分析，输出设计规范和组件库。预计本周内可以交付低保真原型。',
-  ],
-  '市场部': ['营销策略我来制定。先做目标人群画像，然后规划内容矩阵和渠道策略。'],
-  '数据部': ['数据分析体系我来搭建。首先确定核心指标框架，然后设计数据埋点方案和看板。'],
-  '运营部': ['项目管理我来统筹。我会创建项目计划，设置里程碑和关键节点。'],
-  '战略部': ['从行业趋势看，这个方向正处于上升期。我会产出市场分析报告。'],
-  '法务部': ['法务合规方面我来把关。需要关注用户数据隐私和平台责任条款。'],
-  'HR部': ['团队组建方面我来协助。根据项目需求，我建议团队架构和能力矩阵。'],
-  '创意部': ['创意方向我来头脑风暴。从叙事角度，我们可以构建一个引人入胜的品牌故事。'],
-};
 
 const ChatPage: React.FC = () => {
   const currentCompany = useStore((s) => s.currentCompany);
-  const updateCompany = useStore((s) => s.updateCompany);
+  const catalogAgents = useStore((s) => s.catalogAgents);
   const currentChat = useStore((s) => s.currentChat);
   const setCurrentChat = useStore((s) => s.setCurrentChat);
   const messages = useStore((s) => s.messages);
   const addMessage = useStore((s) => s.addMessage);
+  const updateLastMessage = useStore((s) => s.updateLastMessage);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const setProfileDrawerAgent = useStore((s) => s.setProfileDrawerAgent);
+  const addToast = useStore((s) => s.addToast);
   const [inputText, setInputText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationMapRef = useRef<Record<string, string>>({});
+  const socketRef = useRef<ReturnType<typeof api.getSocket> | null>(null);
 
   const company = currentCompany;
   if (!company) return null;
+
+  // Build agent lookup from catalog
+  const agentMap: Record<string, Agent> = {};
+  catalogAgents.forEach((a: any) => {
+    agentMap[a.id] = {
+      id: a.id,
+      name: a.name,
+      dept: a.dept,
+      desc: a.description || a.desc || '',
+      tags: a.tags || [],
+      role: a.role || '',
+    };
+  });
+
   const employees = (company.employees || [])
-    .map((eid) => AGENTS_DB.find((a) => a.id === eid))
+    .map((eid) => agentMap[eid])
     .filter(Boolean) as Agent[];
 
-  // Build chat list
+  // Build chat list from hired agents
   const chats: Conversation[] = [];
   if (employees.length > 0) {
-    chats.push({ id: 'all', name: '全体群聊', type: 'group', preview: '点击开始与AI团队对话', time: Date.now(), unread: 3, color: '#3370ff' });
-    const depts = [...new Set(employees.map((a) => a.dept))];
-    depts.forEach((dept) => {
-      chats.push({ id: 'dept_' + dept, name: dept + '群', type: 'dept', dept, preview: '部门协作频道', time: Date.now() - 60000, color: DEPT_COLORS[dept] || '#3370ff' });
-    });
     employees.forEach((agent) => {
-      chats.push({ id: 'agent_' + agent.id, name: agent.name, type: 'agent', agent, preview: agent.desc.slice(0, 20) + '...', time: Date.now() - 120000, color: DEPT_COLORS[agent.dept] || '#3370ff' });
+      chats.push({
+        id: 'agent_' + agent.id,
+        name: agent.name,
+        type: 'agent',
+        agent,
+        preview: agent.desc.slice(0, 20) + '...',
+        time: Date.now() - 120000,
+        color: DEPT_COLORS[agent.dept] || '#3370ff',
+      });
     });
   }
 
@@ -77,58 +80,153 @@ const ChatPage: React.FC = () => {
   const currentMessages = messages[chatKey] || [];
   const activeChatData = chats.find((c) => c.id === activeChat);
 
+  // Setup Socket.IO
+  useEffect(() => {
+    const socket = api.getSocket();
+    socketRef.current = socket;
+
+    socket.on('message_token', (data: { conversationId: string; token: string }) => {
+      // Find the chat key for this conversation
+      const convId = data.conversationId;
+      // We'll update streaming text via ref
+      setStreamingText((prev) => prev + data.token);
+    });
+
+    socket.on('message_complete', (data: { conversationId: string; userMessage: any; assistantMessage: any }) => {
+      // Find which chatKey maps to this conversationId
+      const entries = Object.entries(conversationMapRef.current);
+      let matchedKey = '';
+      for (const [key, cid] of entries) {
+        if (cid === data.conversationId) {
+          matchedKey = key;
+          break;
+        }
+      }
+      if (matchedKey) {
+        // Get agent info
+        const agentId = data.assistantMessage.agentId;
+        const agent = agentMap[agentId];
+        // Replace the streaming placeholder message
+        const store = useStore.getState();
+        const msgs = store.messages[matchedKey] || [];
+        // Remove the last typing message if present
+        const filtered = msgs.filter((m) => !m.typing);
+        filtered.push({
+          self: false,
+          sender: agent?.name || 'AI',
+          text: data.assistantMessage.content,
+          color: agent ? DEPT_COLORS[agent.dept] : '#3370ff',
+          time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        });
+        store.setMessages(matchedKey, filtered);
+      }
+      setSending(false);
+      setStreamingText('');
+    });
+
+    socket.on('agent_typing', (data: { conversationId: string; typing: boolean }) => {
+      // Handled via sending state
+    });
+
+    socket.on('error', (data: { message: string }) => {
+      setSending(false);
+      setStreamingText('');
+      addToast(data.message || '\u53D1\u9001\u5931\u8D25', 'error');
+    });
+
+    return () => {
+      socket.off('message_token');
+      socket.off('message_complete');
+      socket.off('agent_typing');
+      socket.off('error');
+    };
+  }, []);
+
+  // Update streaming message in real time
+  useEffect(() => {
+    if (!streamingText || !sending) return;
+    const store = useStore.getState();
+    const msgs = store.messages[chatKey] || [];
+    // Check if last message is typing placeholder
+    const last = msgs[msgs.length - 1];
+    if (last && last.typing) {
+      store.updateLastMessage(chatKey, streamingText);
+    }
+  }, [streamingText, chatKey, sending]);
+
   // Scroll to bottom
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
-  }, [currentMessages.length]);
+  }, [currentMessages.length, streamingText]);
 
-  const simulateResponse = useCallback((key: string, chatId: string, userText: string) => {
-    let respondents: Agent[] = [];
-    if (chatId === 'all') {
-      respondents = employees.slice(0, Math.min(3, employees.length));
-    } else if (chatId.startsWith('dept_')) {
-      const dept = chatId.replace('dept_', '');
-      respondents = employees.filter((a) => a.dept === dept).slice(0, 2);
-    } else if (chatId.startsWith('agent_')) {
-      const aid = chatId.replace('agent_', '');
-      const agent = employees.find((a) => a.id === aid);
-      if (agent) respondents = [agent];
+  const ensureConversation = async (chatId: string): Promise<string | null> => {
+    // Check if we already have a conversation ID for this chat
+    const existing = conversationMapRef.current[company.id + '_' + chatId];
+    if (existing) return existing;
+
+    // Create a new conversation via API
+    const agentId = chatId.replace('agent_', '');
+    const agent = agentMap[agentId];
+    try {
+      const conv = await api.createConversation(company.id, {
+        type: 'agent',
+        targetId: agentId,
+        name: agent?.name || agentId,
+      });
+      conversationMapRef.current[company.id + '_' + chatId] = conv.id;
+      // Join the socket room
+      socketRef.current?.emit('join_conversation', conv.id);
+      return conv.id;
+    } catch (err) {
+      console.error('Failed to create conversation:', err);
+      addToast('\u521B\u5EFA\u5BF9\u8BDD\u5931\u8D25', 'error');
+      return null;
     }
+  };
 
-    respondents.forEach((agent, i) => {
-      setTimeout(() => {
-        const deptResps = DEPT_RESPONSES[agent.dept] || ['收到任务，我会从我的专业角度进行分析和执行。'];
-        let text: string;
-        if (userText.includes('进度') || userText.includes('汇报')) {
-          text = `【${agent.name}进度汇报】\n当前任务进展顺利。已完成约60%的工作量。\n\n已完成：基础框架搭建\n进行中：细节优化\n待开始：最终测试`;
-        } else {
-          text = deptResps[Math.floor(Math.random() * deptResps.length)];
-        }
-        addMessage(key, {
-          self: false,
-          sender: agent.name,
-          text,
-          color: DEPT_COLORS[agent.dept],
-          time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-        });
-      }, 800 + i * 1500);
-    });
-  }, [employees, addMessage]);
-
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = inputText.trim();
-    if (!text || !activeChat) return;
+    if (!text || !activeChat || sending) return;
+
+    // Add user message immediately
     addMessage(chatKey, {
       self: true,
       text,
-      sender: '我',
+      sender: '\u6211',
       time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
     });
     setInputText('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    simulateResponse(chatKey, activeChat, text);
+    setSending(true);
+    setStreamingText('');
+
+    // Ensure we have a conversation
+    const conversationId = await ensureConversation(activeChat);
+    if (!conversationId) {
+      setSending(false);
+      return;
+    }
+
+    // Add typing placeholder
+    const agentId = activeChat.replace('agent_', '');
+    const agent = agentMap[agentId];
+    addMessage(chatKey, {
+      self: false,
+      sender: agent?.name || 'AI',
+      text: '',
+      color: agent ? DEPT_COLORS[agent.dept] : '#3370ff',
+      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      typing: true,
+    });
+
+    // Send via socket
+    socketRef.current?.emit('send_message', {
+      conversationId,
+      content: text,
+      senderId: 'user',
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -206,7 +304,6 @@ const ChatPage: React.FC = () => {
                 </div>
                 <div className="chat-item-meta">
                   <span className="chat-item-time">{timeAgo(chat.time)}</span>
-                  {chat.unread && <span className="chat-item-unread">{chat.unread}</span>}
                 </div>
               </div>
             ))}
@@ -223,7 +320,7 @@ const ChatPage: React.FC = () => {
               >
                 {activeChatData?.name || '对话'}
               </h4>
-              {activeChatData?.type === 'group' && <span>{employees.length}位成员</span>}
+              {sending && <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>正在输入...</span>}
             </div>
           </div>
 
@@ -231,9 +328,7 @@ const ChatPage: React.FC = () => {
             {currentMessages.length === 0 && (
               <div className="msg msg-system">
                 <div className="msg-bubble">
-                  {activeChatData?.type === 'group'
-                    ? '欢迎来到全体群聊，发送消息或任务指令开始协作'
-                    : `与 ${activeChatData?.name || 'AI'} 开始对话`}
+                  与 {activeChatData?.name || 'AI'} 开始对话
                 </div>
               </div>
             )}
@@ -242,7 +337,7 @@ const ChatPage: React.FC = () => {
                 key={i}
                 message={msg}
                 onAvatarClick={(name) => {
-                  const agent = AGENTS_DB.find((a) => a.name === name);
+                  const agent = employees.find((a) => a.name === name);
                   if (agent) setProfileDrawerAgent(agent.id);
                 }}
               />
@@ -254,12 +349,13 @@ const ChatPage: React.FC = () => {
               <textarea
                 ref={textareaRef}
                 rows={1}
-                placeholder="输入消息或任务指令..."
+                placeholder="输入消息..."
                 value={inputText}
                 onChange={handleTextareaInput}
                 onKeyDown={handleKeyDown}
+                disabled={sending}
               />
-              <button className="chat-send" onClick={handleSend} disabled={!inputText.trim()}>
+              <button className="chat-send" onClick={handleSend} disabled={!inputText.trim() || sending}>
                 <SendIcon />
               </button>
             </div>

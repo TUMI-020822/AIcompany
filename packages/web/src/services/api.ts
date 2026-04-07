@@ -1,5 +1,4 @@
 import { io, Socket } from 'socket.io-client';
-import type { Company, AgentConfig } from '../types';
 
 // ====== REST API Wrapper ======
 const BASE = '/api';
@@ -9,17 +8,20 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
   return res.json();
 }
 
-// Companies
+// ── Companies ──────────────────────────────────────────────────────────────
 export function getCompanies() {
-  return request<Company[]>('/companies');
+  return request<any[]>('/companies');
 }
 
-export function createCompany(data: { name: string; industry: string; desc: string }) {
-  return request<Company>('/companies', { method: 'POST', body: JSON.stringify(data) });
+export function createCompany(data: { name: string; industry: string; description: string }) {
+  return request<any>('/companies', { method: 'POST', body: JSON.stringify(data) });
 }
 
 export function deleteCompany(id: string) {
@@ -27,50 +29,61 @@ export function deleteCompany(id: string) {
 }
 
 export function getCompany(id: string) {
-  return request<Company>(`/companies/${id}`);
+  return request<any>(`/companies/${id}`);
 }
 
-// Catalog
-export function getCatalog() {
-  return request<{ agents: unknown[]; providers: unknown[]; skills: unknown[]; mcpServers: unknown[] }>('/catalog');
+// ── Agent Catalog ──────────────────────────────────────────────────────────
+export function getCatalog(companyId?: string) {
+  const qs = companyId ? `?companyId=${companyId}` : '';
+  return request<any[]>(`/agents/catalog${qs}`);
 }
 
-// Agent management
-export function hireAgent(companyId: string, agentId: string) {
-  return request<Company>(`/companies/${companyId}/hire`, { method: 'POST', body: JSON.stringify({ agentId }) });
+// ── Agent Management ───────────────────────────────────────────────────────
+export function getHiredAgents(companyId: string) {
+  return request<any[]>(`/agents/companies/${companyId}/agents`);
 }
 
-export function fireAgent(companyId: string, agentId: string) {
-  return request<Company>(`/companies/${companyId}/fire`, { method: 'POST', body: JSON.stringify({ agentId }) });
-}
-
-export function updateAgentConfig(companyId: string, agentId: string, config: Partial<AgentConfig>) {
-  return request<Company>(`/companies/${companyId}/agents/${agentId}/config`, { method: 'PUT', body: JSON.stringify(config) });
-}
-
-// Conversations & Messages
-export function getConversations(companyId: string) {
-  return request<unknown[]>(`/companies/${companyId}/conversations`);
-}
-
-export function getMessages(companyId: string, conversationId: string) {
-  return request<unknown[]>(`/companies/${companyId}/conversations/${conversationId}/messages`);
-}
-
-export function sendMessage(companyId: string, conversationId: string, text: string) {
-  return request<unknown>(`/companies/${companyId}/conversations/${conversationId}/messages`, {
+export function hireAgent(companyId: string, agentId: string, config?: Record<string, unknown>) {
+  return request<any>(`/agents/companies/${companyId}/hire`, {
     method: 'POST',
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ agentId, config }),
   });
 }
 
-// Tasks
-export function getTasks(companyId: string) {
-  return request<unknown[]>(`/companies/${companyId}/tasks`);
+export function fireAgent(companyId: string, agentId: string) {
+  return request<any>(`/agents/companies/${companyId}/agents/${agentId}`, { method: 'DELETE' });
 }
 
-export function createTask(companyId: string, data: { name: string; desc: string }) {
-  return request<unknown>(`/companies/${companyId}/tasks`, { method: 'POST', body: JSON.stringify(data) });
+export function updateAgentConfig(companyId: string, agentId: string, config: Record<string, unknown>) {
+  return request<any>(`/agents/companies/${companyId}/agents/${agentId}/config`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
+// ── Conversations & Messages ───────────────────────────────────────────────
+export function getConversations(companyId: string) {
+  return request<any[]>(`/chat/companies/${companyId}/conversations`);
+}
+
+export function createConversation(companyId: string, data: { type: string; targetId: string; name: string }) {
+  return request<any>(`/chat/companies/${companyId}/conversations`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function getMessages(conversationId: string, limit = 50, offset = 0) {
+  return request<{ messages: any[]; total: number }>(`/chat/conversations/${conversationId}/messages?limit=${limit}&offset=${offset}`);
+}
+
+// ── Tasks ──────────────────────────────────────────────────────────────────
+export function getTasks(companyId: string) {
+  return request<any[]>(`/tasks/companies/${companyId}/tasks`);
+}
+
+export function createTask(companyId: string, data: { name: string; description: string }) {
+  return request<any>(`/tasks/companies/${companyId}/tasks`, { method: 'POST', body: JSON.stringify(data) });
 }
 
 // ====== Socket.IO Singleton ======

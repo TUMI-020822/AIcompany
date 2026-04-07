@@ -9,14 +9,36 @@ interface Props {
 const MessageBubble: React.FC<Props> = ({ message, onAvatarClick }) => {
   const [displayText, setDisplayText] = useState(message.self ? message.text : '');
   const animating = useRef(false);
+  const prevTextRef = useRef(message.text);
 
   useEffect(() => {
     if (message.self) {
       setDisplayText(message.text);
       return;
     }
-    // Typewriter effect for agent messages
-    if (animating.current) return;
+
+    // For streaming/typing messages, just display text directly (tokens arrive incrementally)
+    if (message.typing) {
+      setDisplayText(message.text || '\u2588');
+      return;
+    }
+
+    // If text is being updated incrementally (streaming complete replacement), show directly
+    if (prevTextRef.current !== '' && message.text.startsWith(prevTextRef.current)) {
+      setDisplayText(message.text);
+      prevTextRef.current = message.text;
+      return;
+    }
+
+    prevTextRef.current = message.text;
+
+    // Typewriter effect for static agent messages
+    if (animating.current) {
+      // If already animating, just update target
+      setDisplayText(message.text);
+      animating.current = false;
+      return;
+    }
     animating.current = true;
     let idx = 0;
     const text = message.text;
@@ -28,14 +50,14 @@ const MessageBubble: React.FC<Props> = ({ message, onAvatarClick }) => {
         animating.current = false;
       }
     }, 15 + Math.random() * 20);
-    return () => clearInterval(interval);
-  }, [message.text, message.self]);
+    return () => { clearInterval(interval); animating.current = false; };
+  }, [message.text, message.self, message.typing]);
 
   if (message.self) {
     return (
       <div className="msg msg-self">
         <div className="msg-body">
-          <span className="msg-name">我</span>
+          <span className="msg-name">{'\u6211'}</span>
           <div className="msg-bubble">{message.text}</div>
           <span className="msg-time">{message.time}</span>
         </div>
@@ -43,7 +65,7 @@ const MessageBubble: React.FC<Props> = ({ message, onAvatarClick }) => {
           className="msg-avatar"
           style={{ background: 'linear-gradient(135deg,#3370ff,#6b5ce7)' }}
         >
-          我
+          {'\u6211'}
         </div>
       </div>
     );
@@ -66,7 +88,9 @@ const MessageBubble: React.FC<Props> = ({ message, onAvatarClick }) => {
         >
           {message.sender}
         </span>
-        <div className="msg-bubble" style={{ whiteSpace: 'pre-wrap' }}>{displayText}</div>
+        <div className="msg-bubble" style={{ whiteSpace: 'pre-wrap' }}>
+          {displayText || (message.typing ? '\u2588' : '')}
+        </div>
         <span className="msg-time">{message.time}</span>
       </div>
     </div>

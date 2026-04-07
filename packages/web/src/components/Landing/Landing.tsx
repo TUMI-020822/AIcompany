@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
 import { LogoIcon, CloseIcon } from '../shared/Icons';
@@ -11,9 +11,14 @@ function timeAgo(ts: number): string {
 
 const Landing: React.FC = () => {
   const companies = useStore((s) => s.companies);
+  const loadCompanies = useStore((s) => s.loadCompanies);
   const removeCompany = useStore((s) => s.removeCompany);
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
+
+  useEffect(() => {
+    loadCompanies();
+  }, [loadCompanies]);
 
   const enterCompany = (company: Company) => {
     navigate(`/company/${company.id}`);

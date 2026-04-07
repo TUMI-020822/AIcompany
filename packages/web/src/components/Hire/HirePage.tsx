@@ -1,46 +1,72 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../../store';
-import { AGENTS_DB, DEPT_COLORS, PROVIDERS, getAgentDefaults } from '../../types';
+import { DEPT_COLORS, PROVIDERS } from '../../types';
 import type { Agent } from '../../types';
 import AgentCard from './AgentCard';
+import * as api from '../../services/api';
 
 const HirePage: React.FC = () => {
   const currentCompany = useStore((s) => s.currentCompany);
   const updateCompany = useStore((s) => s.updateCompany);
+  const catalogAgents = useStore((s) => s.catalogAgents);
   const hireDeptFilter = useStore((s) => s.hireDeptFilter);
   const setHireDeptFilter = useStore((s) => s.setHireDeptFilter);
   const addToast = useStore((s) => s.addToast);
   const setConfigModalAgent = useStore((s) => s.setConfigModalAgent);
   const setProfileDrawerAgent = useStore((s) => s.setProfileDrawerAgent);
+  const [hiringId, setHiringId] = useState<string | null>(null);
 
   const company = currentCompany;
   if (!company) return null;
 
-  const allDeptKeys = Object.keys(DEPT_COLORS);
+  // Build agent list from server catalog
+  const agents: Agent[] = catalogAgents.map((a: any) => ({
+    id: a.id,
+    name: a.name,
+    dept: a.dept,
+    desc: a.description || a.desc || '',
+    tags: a.tags || [],
+    role: a.role || '',
+  }));
+
+  const allDeptKeys = [...new Set(agents.map((a) => a.dept))];
   (company.customDepts || []).forEach((cd) => {
     if (!allDeptKeys.includes(cd.name)) allDeptKeys.push(cd.name);
   });
-  const depts = ['全部', ...allDeptKeys];
+  const depts = ['\u5168\u90E8', ...allDeptKeys];
 
-  const filtered = hireDeptFilter === '全部'
-    ? AGENTS_DB
-    : AGENTS_DB.filter((a) => a.dept === hireDeptFilter);
+  const filtered = hireDeptFilter === '\u5168\u90E8'
+    ? agents
+    : agents.filter((a) => a.dept === hireDeptFilter);
 
-  const handleHire = (agent: Agent) => {
-    const employees = [...(company.employees || []), agent.id];
-    const configs = { ...company.employeeConfigs };
-    if (!configs[agent.id]) {
-      const defs = getAgentDefaults(agent.id);
-      configs[agent.id] = {
-        provider: 'deepseek',
-        model: 'deepseek-chat',
-        skills: defs.skills,
-        mcpServers: defs.mcpServers,
-        autoagent: defs.autoagent,
-      };
+  const handleHire = async (agent: Agent) => {
+    if (hiringId) return;
+    setHiringId(agent.id);
+    try {
+      await api.hireAgent(company.id, agent.id);
+      // Update local state
+      const employees = [...(company.employees || []), agent.id];
+      const configs = { ...company.employeeConfigs };
+      if (!configs[agent.id]) {
+        configs[agent.id] = {
+          provider: 'deepseek',
+          model: 'deepseek-chat',
+          skills: [],
+          mcpServers: [],
+          autoagent: { enabled: false, programMd: '', benchTasks: '', score: 0, iterations: 0, bestScore: 0, log: [] },
+        };
+      }
+      updateCompany({ ...company, employees, employeeConfigs: configs });
+      addToast(`${agent.name} \u5DF2\u52A0\u5165\u516C\u53F8\uFF01`);
+    } catch (err: any) {
+      if (err.message?.includes('409')) {
+        addToast(`${agent.name} \u5DF2\u7ECF\u88AB\u805A\u7528`, 'error');
+      } else {
+        addToast(`\u805A\u7528\u5931\u8D25: ${err.message}`, 'error');
+      }
+    } finally {
+      setHiringId(null);
     }
-    updateCompany({ ...company, employees, employeeConfigs: configs });
-    addToast(`${agent.name} 已加入公司！已自动配置 Skills、MCP 和自优化。`);
   };
 
   return (
@@ -54,7 +80,7 @@ const HirePage: React.FC = () => {
             <h2>AI员工招聘中心</h2>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
               <p style={{ margin: 0 }}>
-                从187+专业角色中选择，组建你的AI团队。已聘用 {(company.employees || []).length} 人。
+                从{agents.length}+专业角色中选择，组建你的AI团队。已聘用 {(company.employees || []).length} 人。
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn-secondary" style={{ fontSize: 13, padding: '7px 14px' }}>+ 新建部门</button>

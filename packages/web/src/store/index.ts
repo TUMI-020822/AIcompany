@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Company, Message, Task, Conversation } from '../types';
+import * as api from '../services/api';
 
 export type PageId = 'chat' | 'hire' | 'contacts' | 'work' | 'output';
 
@@ -16,10 +17,12 @@ interface AppState {
   addCompany: (company: Company) => void;
   removeCompany: (id: string) => void;
   updateCompany: (company: Company) => void;
+  loadCompanies: () => Promise<void>;
 
   // Current company
   currentCompany: Company | null;
   setCurrentCompany: (company: Company | null) => void;
+  enterCompany: (id: string) => Promise<Company | null>;
 
   // Navigation
   currentPage: PageId;
@@ -31,6 +34,7 @@ interface AppState {
   messages: Record<string, Message[]>;
   setMessages: (key: string, msgs: Message[]) => void;
   addMessage: (key: string, msg: Message) => void;
+  updateLastMessage: (key: string, text: string) => void;
 
   // Tasks
   tasks: Task[];
@@ -39,6 +43,11 @@ interface AppState {
   // Conversations
   conversations: Conversation[];
   setConversations: (convos: Conversation[]) => void;
+
+  // Catalog (agents from server)
+  catalogAgents: any[];
+  setCatalogAgents: (agents: any[]) => void;
+  loadCatalog: (companyId?: string) => Promise<void>;
 
   // UI state
   hireDeptFilter: string;
@@ -62,30 +71,85 @@ interface AppState {
 
 export const useStore = create<AppState>((set, get) => ({
   // Companies
-  companies: JSON.parse(localStorage.getItem('ai_companies') || '[]'),
-  setCompanies: (companies) => {
-    localStorage.setItem('ai_companies', JSON.stringify(companies));
-    set({ companies });
-  },
-  addCompany: (company) => {
-    const companies = [...get().companies, company];
-    localStorage.setItem('ai_companies', JSON.stringify(companies));
-    set({ companies });
-  },
+  companies: [],
+  setCompanies: (companies) => set({ companies }),
+  addCompany: (company) => set((s) => ({ companies: [...s.companies, company] })),
   removeCompany: (id) => {
-    const companies = get().companies.filter(c => c.id !== id);
-    localStorage.setItem('ai_companies', JSON.stringify(companies));
-    set({ companies });
+    api.deleteCompany(id).catch((err) => console.error('Failed to delete company:', err));
+    set((s) => ({ companies: s.companies.filter((c) => c.id !== id) }));
   },
   updateCompany: (company) => {
-    const companies = get().companies.map(c => c.id === company.id ? company : c);
-    localStorage.setItem('ai_companies', JSON.stringify(companies));
-    set({ companies, currentCompany: company });
+    set((s) => ({
+      companies: s.companies.map((c) => (c.id === company.id ? company : c)),
+      currentCompany: s.currentCompany?.id === company.id ? company : s.currentCompany,
+    }));
+  },
+  loadCompanies: async () => {
+    try {
+      const rows = await api.getCompanies();
+      const companies: Company[] = rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        industry: r.industry || '',
+        desc: r.description || '',
+        created: new Date(r.createdAt).getTime(),
+        employees: [],
+        tasks: [],
+        employeeConfigs: {},
+      }));
+      set({ companies });
+    } catch (err) {
+      console.error('Failed to load companies:', err);
+    }
   },
 
   // Current company
   currentCompany: null,
   setCurrentCompany: (company) => set({ currentCompany: company }),
+  enterCompany: async (id: string) => {
+    try {
+      // Load company details
+      const companyData = await api.getCompany(id);
+      // Load hired agents
+      const hiredAgents = await api.getHiredAgents(id);
+
+      const employees = hiredAgents.map((e: any) => e.agentId);
+      const employeeConfigs: Record<string, any> = {};
+      hiredAgents.forEach((e: any) => {
+        employeeConfigs[e.agentId] = {
+          provider: (e.config as any)?.provider || 'deepseek',
+          model: (e.config as any)?.model || 'deepseek-chat',
+          apiKey: (e.config as any)?.apiKey || '',
+          baseUrl: (e.config as any)?.baseUrl || '',
+          temperature: (e.config as any)?.temperature ?? 0.7,
+          maxTokens: (e.config as any)?.maxTokens || 4096,
+          systemPrompt: (e.config as any)?.systemPrompt || '',
+          skills: (e.config as any)?.skills || [],
+          mcpServers: (e.config as any)?.mcpServers || [],
+          autoagent: (e.config as any)?.autoagent || { enabled: false, programMd: '', benchTasks: '', score: 0, iterations: 0, bestScore: 0, log: [] },
+        };
+      });
+
+      const company: Company = {
+        id: companyData.id,
+        name: companyData.name,
+        industry: companyData.industry || '',
+        desc: companyData.description || '',
+        created: new Date(companyData.createdAt).getTime(),
+        employees,
+        tasks: [],
+        employeeConfigs,
+      };
+
+      set({ currentCompany: company });
+      // Also update in list
+      get().updateCompany(company);
+      return company;
+    } catch (err) {
+      console.error('Failed to enter company:', err);
+      return null;
+    }
+  },
 
   // Navigation
   currentPage: 'chat',
@@ -96,10 +160,19 @@ export const useStore = create<AppState>((set, get) => ({
   setCurrentChat: (chatId) => set({ currentChat: chatId }),
   messages: {},
   setMessages: (key, msgs) => set((state) => ({ messages: { ...state.messages, [key]: msgs } })),
-  addMessage: (key, msg) => set((state) => {
-    const existing = state.messages[key] || [];
-    return { messages: { ...state.messages, [key]: [...existing, msg] } };
-  }),
+  addMessage: (key, msg) =>
+    set((state) => {
+      const existing = state.messages[key] || [];
+      return { messages: { ...state.messages, [key]: [...existing, msg] } };
+    }),
+  updateLastMessage: (key, text) =>
+    set((state) => {
+      const msgs = state.messages[key] || [];
+      if (msgs.length === 0) return state;
+      const updated = [...msgs];
+      updated[updated.length - 1] = { ...updated[updated.length - 1], text };
+      return { messages: { ...state.messages, [key]: updated } };
+    }),
 
   // Tasks
   tasks: [],
@@ -109,17 +182,31 @@ export const useStore = create<AppState>((set, get) => ({
   conversations: [],
   setConversations: (conversations) => set({ conversations }),
 
+  // Catalog
+  catalogAgents: [],
+  setCatalogAgents: (agents) => set({ catalogAgents: agents }),
+  loadCatalog: async (companyId?: string) => {
+    try {
+      const agents = await api.getCatalog(companyId);
+      set({ catalogAgents: agents });
+    } catch (err) {
+      console.error('Failed to load catalog:', err);
+    }
+  },
+
   // UI state
-  hireDeptFilter: '全部',
+  hireDeptFilter: '\u5168\u90E8',
   setHireDeptFilter: (dept) => set({ hireDeptFilter: dept }),
   expandedDepts: {},
-  toggleDeptExpand: (dept) => set((state) => ({
-    expandedDepts: { ...state.expandedDepts, [dept]: !(state.expandedDepts[dept] ?? true) }
-  })),
+  toggleDeptExpand: (dept) =>
+    set((state) => ({
+      expandedDepts: { ...state.expandedDepts, [dept]: !(state.expandedDepts[dept] ?? true) },
+    })),
   expandedOutputs: {},
-  toggleOutputExpand: (id) => set((state) => ({
-    expandedOutputs: { ...state.expandedOutputs, [id]: !(state.expandedOutputs[id] ?? true) }
-  })),
+  toggleOutputExpand: (id) =>
+    set((state) => ({
+      expandedOutputs: { ...state.expandedOutputs, [id]: !(state.expandedOutputs[id] ?? true) },
+    })),
 
   // Modals
   configModalAgent: null,
@@ -134,5 +221,5 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => ({ toasts: [...state.toasts, { id, message, type }] }));
     setTimeout(() => get().removeToast(id), 3000);
   },
-  removeToast: (id) => set((state) => ({ toasts: state.toasts.filter(t => t.id !== id) })),
+  removeToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 }));

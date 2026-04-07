@@ -3,19 +3,25 @@ import { useStore } from '../../store';
 import { AGENTS_DB, PROVIDERS, AVAILABLE_SKILLS, DEFAULT_MCP_SERVERS } from '../../types';
 import type { AgentConfig, MCPServer, OptimizationLogEntry } from '../../types';
 import { CloseIcon } from '../shared/Icons';
+import * as api from '../../services/api';
 
 /* placeholder - skeleton with tab switching */
 const ConfigModal: React.FC = () => {
   const agentId = useStore((s) => s.configModalAgent);
   const setConfigModalAgent = useStore((s) => s.setConfigModalAgent);
   const currentCompany = useStore((s) => s.currentCompany);
+  const catalogAgents = useStore((s) => s.catalogAgents);
   const updateCompany = useStore((s) => s.updateCompany);
   const addToast = useStore((s) => s.addToast);
   const [activeTab, setActiveTab] = useState<'model' | 'skills' | 'mcp' | 'autoagent'>('model');
 
   if (!agentId || !currentCompany) return null;
 
-  const agent = AGENTS_DB.find((a) => a.id === agentId);
+  // Look up from catalog first, then fall back to AGENTS_DB
+  const catalogAgent = catalogAgents.find((a: any) => a.id === agentId);
+  const agent = catalogAgent
+    ? { id: catalogAgent.id, name: catalogAgent.name, dept: catalogAgent.dept, desc: catalogAgent.description || '', tags: catalogAgent.tags || [], role: catalogAgent.role || '' }
+    : AGENTS_DB.find((a) => a.id === agentId);
   if (!agent) return null;
 
   const configs = { ...currentCompany.employeeConfigs };
@@ -25,11 +31,17 @@ const ConfigModal: React.FC = () => {
 
   const close = () => setConfigModalAgent(null);
 
-  const save = () => {
+  const save = async () => {
     configs[agentId] = config;
+    // Save to backend
+    try {
+      await api.updateAgentConfig(currentCompany.id, agentId, config as any);
+    } catch (err) {
+      console.error('Failed to save config to server:', err);
+    }
     updateCompany({ ...currentCompany, employeeConfigs: configs });
     close();
-    addToast(`${agent.name} 配置已保存`);
+    addToast(`${agent.name} \u914D\u7F6E\u5DF2\u4FDD\u5B58`);
   };
 
   const tabs = [

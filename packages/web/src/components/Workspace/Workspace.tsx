@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../../store';
 import Sidebar from './Sidebar';
@@ -12,27 +12,49 @@ import { DEPT_COLORS } from '../../types';
 const Workspace: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const companies = useStore((s) => s.companies);
   const currentCompany = useStore((s) => s.currentCompany);
-  const setCurrentCompany = useStore((s) => s.setCurrentCompany);
+  const enterCompany = useStore((s) => s.enterCompany);
   const currentPage = useStore((s) => s.currentPage);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
+  const loadCatalog = useStore((s) => s.loadCatalog);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const company = companies.find((c) => c.id === id);
-    if (!company) {
+    if (!id) {
       navigate('/');
       return;
     }
-    setCurrentCompany(company);
-    // Restore custom dept colors
-    (company.customDepts || []).forEach((cd) => {
-      DEPT_COLORS[cd.name] = cd.color;
-    });
-    setCurrentPage('chat');
-  }, [id, companies, navigate, setCurrentCompany, setCurrentPage]);
 
-  if (!currentCompany) return null;
+    let cancelled = false;
+    const init = async () => {
+      setLoading(true);
+      const company = await enterCompany(id);
+      if (cancelled) return;
+      if (!company) {
+        navigate('/');
+        return;
+      }
+      // Load catalog for hire page
+      await loadCatalog(id);
+      // Restore custom dept colors
+      (company.customDepts || []).forEach((cd) => {
+        DEPT_COLORS[cd.name] = cd.color;
+      });
+      setCurrentPage('chat');
+      setLoading(false);
+    };
+
+    init();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  if (loading || !currentCompany) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-secondary)' }}>
+        加载中...
+      </div>
+    );
+  }
 
   const renderPage = () => {
     switch (currentPage) {
