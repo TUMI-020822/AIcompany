@@ -7,7 +7,8 @@ export type PageId = 'chat' | 'hire' | 'contacts' | 'work' | 'output';
 interface Toast {
   id: string;
   message: string;
-  type: 'success' | 'error';
+  type: 'success' | 'error' | 'warning' | 'info';
+  suggestion?: string;
 }
 
 // DAG types matching the server
@@ -316,10 +317,13 @@ export const useStore = create<AppState>((set, get) => ({
 
   // Toast
   toasts: [],
-  addToast: (message, type = 'success') => {
+  addToast: (message, type = 'success', suggestion?: string) => {
     const id = 'toast_' + Date.now();
-    set((state) => ({ toasts: [...state.toasts, { id, message, type }] }));
-    setTimeout(() => get().removeToast(id), 3000);
+    set((state) => ({ toasts: [...state.toasts, { id, message, type, suggestion }] }));
+    // 自动关闭时间根据类型调整
+    const timeout = type === 'error' ? 5000 : type === 'warning' ? 4000 : 3000;
+    setTimeout(() => get().removeToast(id), timeout);
   },
+  dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
   removeToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 }));

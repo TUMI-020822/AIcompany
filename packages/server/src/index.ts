@@ -9,6 +9,7 @@ import { config } from './config.js';
 // Import DB (auto-initializes tables on import)
 import './db/index.js';
 import { seedAgentsCatalog } from './db/seed.js';
+import { AutoBackupScheduler, checkDatabaseHealth } from './db/backup.js';
 
 // Import routes
 import companiesRouter from './routes/companies.js';
@@ -18,6 +19,13 @@ import { createTasksRouter } from './routes/tasks.js';
 import mcpRouter from './routes/mcp.js';
 import skillsRouter from './routes/skills.js';
 import { createAutoAgentRouter } from './routes/autoagent.js';
+import systemRouter from './routes/system.js';
+
+// Import middleware
+import { errorHandler, requestLogger, defaultRateLimiter, timeoutMiddleware } from './middleware/index.js';
+
+// Import performance monitoring
+import { resourceMonitor, taskMetricsCollector } from './utils/performance.js';
 
 // Import chat service for socket handlers
 import { sendMessage } from './services/chat.js';
@@ -45,6 +53,9 @@ const io = new SocketIOServer(server, {
 // ── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(requestLogger);
+app.use(defaultRateLimiter.middleware);
+app.use(timeoutMiddleware(60000)); // 60s timeout for API requests
 
 // ── API Routes ──────────────────────────────────────────────────────────────
 app.use('/api/companies', companiesRouter);
@@ -54,10 +65,32 @@ app.use('/api/tasks', createTasksRouter(io));
 app.use('/api/mcp', mcpRouter);
 app.use('/api/skills', skillsRouter);
 app.use('/api/autoagent', createAutoAgentRouter(io));
+app.use('/api/system', systemRouter);
 
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Health check (enhanced)
+app.get('/api/health', async (_req, res) => {
+  try {
+    const dbHealth = await checkDatabaseHealth();
+    const memUsage = process.memoryUsage();
+
+    res.json({
+      status: dbHealth.status === 'ok' ? 'ok' : 'degraded',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: dbHealth,
+      memory: {
+        heapUsed: memUsage.heapUsed,
+        heapTotal: memUsage.heapTotal,
+        rss: memUsage.rss,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: err instanceof Error ? err.message : 'Health check failed',
+    });
+  }
 });
 
 // ── Static file serving (production) ────────────────────────────────────────
@@ -241,8 +274,60 @@ io.on('connection', (socket) => {
   });
 });
 
+// ── Error handling middleware (must be last) ───────────────────────────────────
+app.use(errorHandler);
+
+// ── Graceful shutdown ───────────────────────────────────────────────────────────
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n[server] Received ${signal}, starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('[server] HTTP server closed');
+  });
+
+  // Stop resource monitoring
+  resourceMonitor.stop();
+
+  // Stop all MCP servers
+  await mcpManager.stopAll();
+
+  // Close Socket.IO
+  io.close(() => {
+    console.log('[server] Socket.IO server closed');
+  });
+
+  console.log('[server] Graceful shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[server] Unhandled rejection at:', promise, 'reason:', reason);
+});
+
 // ── Start Server ────────────────────────────────────────────────────────────
 async function start() {
+  // Start resource monitoring
+  resourceMonitor.start(60000); // every 60 seconds
+
+  // Start auto backup scheduler
+  const backupScheduler = new AutoBackupScheduler(24, 7); // daily backup, keep 7
+  backupScheduler.start();
+
   // Seed the database
   await seedAgentsCatalog();
 
@@ -250,6 +335,8 @@ async function start() {
     console.log(`[server] AI Agency backend running on http://localhost:${config.PORT}`);
     console.log(`[server] API available at http://localhost:${config.PORT}/api`);
     console.log(`[server] Database: ${config.DB_PATH}`);
+    console.log(`[server] Node.js ${process.version} | Platform: ${process.platform}`);
+    console.log(`[server] Environment: ${process.env.NODE_ENV || 'development'}`);
   });
 }
 

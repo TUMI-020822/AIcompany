@@ -1,21 +1,79 @@
+version: '3.8'
+
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-agency:latest
+    container_name: ai-agency-app
     ports:
       - "3000:3000"
     volumes:
+      # 持久化数据
       - app-data:/app/data
+      - app-logs:/app/logs
+      # 可选：挂载本地代码用于开发
+      # - ./packages/server/src:/app/packages/server/src:ro
     environment:
       - NODE_ENV=production
       - PORT=3000
       - DB_PATH=./data/ai-agency.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-random-string}
+      # LLM API Keys
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      # Ollama (如果使用本地 Ollama)
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # MCP (可选)
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - ai-agency-network
+
+  # 可选：Nginx 反向代理（生产环境推荐）
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: ai-agency-nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - app
+  #   networks:
+  #     - ai-agency-network
 
 volumes:
   app-data:
+    driver: local
+  app-logs:
+    driver: local
+
+networks:
+  ai-agency-network:
+    driver: bridge
