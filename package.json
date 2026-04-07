@@ -1,0 +1,23 @@
+{
+  "name": "ai-agency",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI公司企业管理平台 - 多智能体协作办公系统",
+  "workspaces": [
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "npm run dev -w packages/server",
+    "dev:web": "npm run dev -w packages/web",
+    "build": "npm run build -w packages/web && npm run build -w packages/server",
+    "start": "node packages/server/dist/index.js",
+    "db:migrate": "npm run migrate -w packages/server",
+    "db:seed": "npm run seed -w packages/server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  }
+}

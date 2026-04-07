@@ -1,0 +1,150 @@
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { config } from './config.js';
+
+// Import DB (auto-initializes tables on import)
+import './db/index.js';
+import { seedAgentsCatalog } from './db/seed.js';
+
+// Import routes
+import companiesRouter from './routes/companies.js';
+import agentsRouter from './routes/agents.js';
+import chatRouter from './routes/chat.js';
+import tasksRouter from './routes/tasks.js';
+
+// Import chat service for socket handlers
+import { sendMessage } from './services/chat.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const server = http.createServer(app);
+
+// Socket.IO setup
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+});
+
+// ── Middleware ───────────────────────────────────────────────────────────────
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// ── API Routes ──────────────────────────────────────────────────────────────
+app.use('/api/companies', companiesRouter);
+app.use('/api/agents', agentsRouter);
+app.use('/api/chat', chatRouter);
+app.use('/api/tasks', tasksRouter);
+
+// Health check
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ── Static file serving (production) ────────────────────────────────────────
+const webDistPath = path.resolve(__dirname, '../../web/dist');
+app.use(express.static(webDistPath));
+
+// SPA fallback: serve index.html for any non-API routes
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api')) {
+    res.status(404).json({ error: 'API endpoint not found' });
+    return;
+  }
+  res.sendFile(path.join(webDistPath, 'index.html'), (err) => {
+    if (err) {
+      res.status(404).json({ error: 'Web app not built yet. Run: npm run build -w packages/web' });
+    }
+  });
+});
+
+// ── Socket.IO Event Handlers ────────────────────────────────────────────────
+io.on('connection', (socket) => {
+  console.log(`[socket] Client connected: ${socket.id}`);
+
+  // Join a conversation room
+  socket.on('join_conversation', (conversationId: string) => {
+    socket.join(`conv:${conversationId}`);
+    console.log(`[socket] ${socket.id} joined conversation ${conversationId}`);
+  });
+
+  // Leave a conversation room
+  socket.on('leave_conversation', (conversationId: string) => {
+    socket.leave(`conv:${conversationId}`);
+    console.log(`[socket] ${socket.id} left conversation ${conversationId}`);
+  });
+
+  // Send a chat message with streaming response
+  socket.on('send_message', async (data: { conversationId: string; content: string; senderId?: string }) => {
+    const { conversationId, content, senderId } = data;
+
+    if (!conversationId || !content) {
+      socket.emit('error', { message: 'conversationId and content are required' });
+      return;
+    }
+
+    try {
+      // Notify that the agent is typing
+      io.to(`conv:${conversationId}`).emit('agent_typing', { conversationId, typing: true });
+
+      const result = await sendMessage({
+        conversationId,
+        content,
+        senderId,
+        onToken: (token: string) => {
+          io.to(`conv:${conversationId}`).emit('message_token', {
+            conversationId,
+            token,
+            messageId: '', // Will be set after completion
+          });
+        },
+      });
+
+      // Emit the complete messages
+      io.to(`conv:${conversationId}`).emit('message_complete', {
+        conversationId,
+        userMessage: result.userMessage,
+        assistantMessage: result.assistantMessage,
+      });
+
+      // Notify that the agent stopped typing
+      io.to(`conv:${conversationId}`).emit('agent_typing', { conversationId, typing: false });
+    } catch (err) {
+      console.error('[socket] send_message error:', err);
+      io.to(`conv:${conversationId}`).emit('agent_typing', { conversationId, typing: false });
+      socket.emit('error', {
+        message: err instanceof Error ? err.message : 'Failed to send message',
+      });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`[socket] Client disconnected: ${socket.id}`);
+  });
+});
+
+// ── Start Server ────────────────────────────────────────────────────────────
+async function start() {
+  // Seed the database
+  await seedAgentsCatalog();
+
+  server.listen(config.PORT, () => {
+    console.log(`[server] AI Agency backend running on http://localhost:${config.PORT}`);
+    console.log(`[server] API available at http://localhost:${config.PORT}/api`);
+    console.log(`[server] Database: ${config.DB_PATH}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('[server] Failed to start:', err);
+  process.exit(1);
+});
+
+export { app, server, io };
