@@ -3,148 +3,180 @@ import { nanoid } from 'nanoid';
 import { db } from '../db/index.js';
 import { tasks, taskSteps } from '../db/schema.js';
 import { eq, desc } from 'drizzle-orm';
+import type { Server as SocketIOServer } from 'socket.io';
+import { launchTask } from '../services/orchestrator/index.js';
 
-const router = Router();
+export function createTasksRouter(io: SocketIOServer): Router {
+  const router = Router();
 
-// GET /companies/:companyId/tasks - list tasks
-router.get('/companies/:companyId/tasks', (req: Request, res: Response) => {
-  try {
-    const { companyId } = req.params;
-    const status = req.query.status as string | undefined;
+  // GET /companies/:companyId/tasks - list tasks
+  router.get('/companies/:companyId/tasks', (req: Request, res: Response) => {
+    try {
+      const { companyId } = req.params;
+      const status = req.query.status as string | undefined;
 
-    let query = db.select().from(tasks).where(eq(tasks.companyId, companyId)).orderBy(desc(tasks.createdAt));
+      const query = db.select().from(tasks).where(eq(tasks.companyId, companyId)).orderBy(desc(tasks.createdAt));
 
-    const allTasks = query.all();
-    const filtered = status ? allTasks.filter((t) => t.status === status) : allTasks;
+      const allTasks = query.all();
+      const filtered = status ? allTasks.filter((t) => t.status === status) : allTasks;
 
-    // Add step counts
-    const enriched = filtered.map((task) => {
-      const steps = db.select().from(taskSteps).where(eq(taskSteps.taskId, task.id)).all();
-      const completedSteps = steps.filter((s) => s.status === 'completed').length;
-      return {
-        ...task,
-        totalSteps: steps.length,
-        completedSteps,
-      };
-    });
+      // Add step counts
+      const enriched = filtered.map((task) => {
+        const steps = db.select().from(taskSteps).where(eq(taskSteps.taskId, task.id)).all();
+        const completedSteps = steps.filter((s) => s.status === 'completed').length;
+        return {
+          ...task,
+          totalSteps: steps.length,
+          completedSteps,
+        };
+      });
 
-    res.json(enriched);
-  } catch (err) {
-    console.error('[tasks] list error:', err);
-    res.status(500).json({ error: 'Failed to list tasks' });
-  }
-});
-
-// POST /companies/:companyId/tasks - create task
-router.post('/companies/:companyId/tasks', (req: Request, res: Response) => {
-  try {
-    const { companyId } = req.params;
-    const { name, description, dag, steps } = req.body;
-
-    if (!name) {
-      res.status(400).json({ error: 'Task name is required' });
-      return;
+      res.json(enriched);
+    } catch (err) {
+      console.error('[tasks] list error:', err);
+      res.status(500).json({ error: 'Failed to list tasks' });
     }
+  });
 
-    const taskId = nanoid();
-    const now = new Date().toISOString();
+  // POST /companies/:companyId/tasks - create task (simple, no orchestration)
+  router.post('/companies/:companyId/tasks', (req: Request, res: Response) => {
+    try {
+      const { companyId } = req.params;
+      const { name, description, dag, steps } = req.body;
 
-    db.insert(tasks).values({
-      id: taskId,
-      companyId,
-      name,
-      description: description || '',
-      status: 'pending',
-      dag: dag || {},
-      createdAt: now,
-      completedAt: null,
-    }).run();
-
-    // Create task steps if provided
-    if (Array.isArray(steps)) {
-      for (let i = 0; i < steps.length; i++) {
-        const step = steps[i];
-        db.insert(taskSteps).values({
-          id: nanoid(),
-          taskId,
-          agentId: step.agentId || '',
-          label: step.label || `Step ${i + 1}`,
-          status: 'pending',
-          orderIndex: step.orderIndex ?? i,
-          input: step.input || {},
-          output: null,
-          startedAt: null,
-          completedAt: null,
-        }).run();
+      if (!name) {
+        res.status(400).json({ error: 'Task name is required' });
+        return;
       }
+
+      const taskId = nanoid();
+      const now = new Date().toISOString();
+
+      db.insert(tasks).values({
+        id: taskId,
+        companyId,
+        name,
+        description: description || '',
+        status: 'pending',
+        dag: dag || {},
+        createdAt: now,
+        completedAt: null,
+      }).run();
+
+      // Create task steps if provided
+      if (Array.isArray(steps)) {
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          db.insert(taskSteps).values({
+            id: nanoid(),
+            taskId,
+            agentId: step.agentId || '',
+            label: step.label || `Step ${i + 1}`,
+            status: 'pending',
+            orderIndex: step.orderIndex ?? i,
+            input: step.input || {},
+            output: null,
+            startedAt: null,
+            completedAt: null,
+          }).run();
+        }
+      }
+
+      const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+      const createdSteps = db.select().from(taskSteps).where(eq(taskSteps.taskId, taskId)).all();
+
+      res.status(201).json({ ...task, steps: createdSteps });
+    } catch (err) {
+      console.error('[tasks] create error:', err);
+      res.status(500).json({ error: 'Failed to create task' });
     }
+  });
 
-    const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-    const createdSteps = db.select().from(taskSteps).where(eq(taskSteps.taskId, taskId)).all();
+  // POST /companies/:companyId/tasks/launch - launch task with DAG orchestration
+  router.post('/companies/:companyId/tasks/launch', async (req: Request, res: Response) => {
+    try {
+      const { companyId } = req.params;
+      const { name, description } = req.body;
 
-    res.status(201).json({ ...task, steps: createdSteps });
-  } catch (err) {
-    console.error('[tasks] create error:', err);
-    res.status(500).json({ error: 'Failed to create task' });
-  }
-});
+      if (!name) {
+        res.status(400).json({ error: 'Task name is required' });
+        return;
+      }
 
-// GET /tasks/:taskId - get task with steps
-router.get('/tasks/:taskId', (req: Request, res: Response) => {
-  try {
-    const { taskId } = req.params;
-    const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-
-    if (!task) {
-      res.status(404).json({ error: 'Task not found' });
-      return;
+      const result = await launchTask(companyId, name, description || '', io);
+      res.status(201).json({
+        taskId: result.taskId,
+        dag: result.dag,
+        message: 'Task launched, subscribe to Socket.IO events for updates',
+      });
+    } catch (err) {
+      console.error('[tasks] launch error:', err);
+      const message = err instanceof Error ? err.message : 'Failed to launch task';
+      res.status(500).json({ error: message });
     }
+  });
 
-    const steps = db.select().from(taskSteps)
-      .where(eq(taskSteps.taskId, taskId))
-      .orderBy(taskSteps.orderIndex)
-      .all();
+  // GET /tasks/:taskId - get task with steps
+  router.get('/tasks/:taskId', (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
 
-    res.json({ ...task, steps });
-  } catch (err) {
-    console.error('[tasks] get error:', err);
-    res.status(500).json({ error: 'Failed to get task' });
-  }
-});
+      if (!task) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+      }
 
-// PUT /tasks/:taskId/status - update task status
-router.put('/tasks/:taskId/status', (req: Request, res: Response) => {
-  try {
-    const { taskId } = req.params;
-    const { status } = req.body;
+      const steps = db.select().from(taskSteps)
+        .where(eq(taskSteps.taskId, taskId))
+        .orderBy(taskSteps.orderIndex)
+        .all();
 
-    if (!status || !['pending', 'running', 'completed', 'failed'].includes(status)) {
-      res.status(400).json({ error: 'Invalid status. Must be: pending, running, completed, or failed' });
-      return;
+      res.json({ ...task, steps });
+    } catch (err) {
+      console.error('[tasks] get error:', err);
+      res.status(500).json({ error: 'Failed to get task' });
     }
+  });
 
-    const existing = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-    if (!existing) {
-      res.status(404).json({ error: 'Task not found' });
-      return;
+  // PUT /tasks/:taskId/status - update task status
+  router.put('/tasks/:taskId/status', (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const { status } = req.body;
+
+      if (!status || !['pending', 'running', 'completed', 'failed'].includes(status)) {
+        res.status(400).json({ error: 'Invalid status. Must be: pending, running, completed, or failed' });
+        return;
+      }
+
+      const existing = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+      if (!existing) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+      }
+
+      const updates: Record<string, unknown> = { status };
+      if (status === 'completed' || status === 'failed') {
+        updates.completedAt = new Date().toISOString();
+      }
+
+      db.update(tasks)
+        .set(updates as any)
+        .where(eq(tasks.id, taskId))
+        .run();
+
+      const updated = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+      res.json(updated);
+    } catch (err) {
+      console.error('[tasks] update status error:', err);
+      res.status(500).json({ error: 'Failed to update task status' });
     }
+  });
 
-    const updates: Record<string, unknown> = { status };
-    if (status === 'completed' || status === 'failed') {
-      updates.completedAt = new Date().toISOString();
-    }
+  return router;
+}
 
-    db.update(tasks)
-      .set(updates as any)
-      .where(eq(tasks.id, taskId))
-      .run();
-
-    const updated = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-    res.json(updated);
-  } catch (err) {
-    console.error('[tasks] update status error:', err);
-    res.status(500).json({ error: 'Failed to update task status' });
-  }
-});
-
-export default router;
+// Keep default export for backward compatibility
+const defaultRouter = Router();
+export default defaultRouter;

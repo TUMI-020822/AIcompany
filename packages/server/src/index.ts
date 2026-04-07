@@ -14,10 +14,13 @@ import { seedAgentsCatalog } from './db/seed.js';
 import companiesRouter from './routes/companies.js';
 import agentsRouter from './routes/agents.js';
 import chatRouter from './routes/chat.js';
-import tasksRouter from './routes/tasks.js';
+import { createTasksRouter } from './routes/tasks.js';
 
 // Import chat service for socket handlers
 import { sendMessage } from './services/chat.js';
+
+// Import orchestrator for socket handlers
+import { launchTask } from './services/orchestrator/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,7 +44,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/companies', companiesRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api/chat', chatRouter);
-app.use('/api/tasks', tasksRouter);
+app.use('/api/tasks', createTasksRouter(io));
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -121,6 +124,46 @@ io.on('connection', (socket) => {
       io.to(`conv:${conversationId}`).emit('agent_typing', { conversationId, typing: false });
       socket.emit('error', {
         message: err instanceof Error ? err.message : 'Failed to send message',
+      });
+    }
+  });
+
+  // ── Task Orchestration Socket Events ──────────────────────────────────────
+
+  // Subscribe to task updates
+  socket.on('task:subscribe', (taskId: string) => {
+    socket.join(`task:${taskId}`);
+    console.log(`[socket] ${socket.id} subscribed to task ${taskId}`);
+  });
+
+  // Unsubscribe from task updates
+  socket.on('task:unsubscribe', (taskId: string) => {
+    socket.leave(`task:${taskId}`);
+    console.log(`[socket] ${socket.id} unsubscribed from task ${taskId}`);
+  });
+
+  // Launch a task via Socket.IO
+  socket.on('task:launch', async (data: { companyId: string; name: string; description?: string }) => {
+    const { companyId, name, description } = data;
+
+    if (!companyId || !name) {
+      socket.emit('error', { message: 'companyId and name are required' });
+      return;
+    }
+
+    try {
+      // Auto-subscribe the launching client to this task's updates
+      const result = await launchTask(companyId, name, description || '', io);
+      socket.join(`task:${result.taskId}`);
+
+      socket.emit('task:launched', {
+        taskId: result.taskId,
+        dag: result.dag,
+      });
+    } catch (err) {
+      console.error('[socket] task:launch error:', err);
+      socket.emit('error', {
+        message: err instanceof Error ? err.message : 'Failed to launch task',
       });
     }
   });

@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store';
+import type { DAGNode, TaskDAG, TaskProgressMessage } from '../../store';
 import { AGENTS_DB, DEPT_COLORS } from '../../types';
-import type { Agent, Task, TaskStep } from '../../types';
 import { RocketIcon } from '../shared/Icons';
 import DAGView from './DAGView';
 import Modal from '../shared/Modal';
+import { getSocket } from '../../services/api';
 
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts;
+function timeAgo(ts: number | string): string {
+  const time = typeof ts === 'string' ? new Date(ts).getTime() : ts;
+  const diff = Date.now() - time;
   if (diff < 60000) return '刚刚';
   if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
   if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
@@ -16,119 +18,112 @@ function timeAgo(ts: number): string {
 
 const WorkbenchPage: React.FC = () => {
   const currentCompany = useStore((s) => s.currentCompany);
-  const updateCompany = useStore((s) => s.updateCompany);
   const addToast = useStore((s) => s.addToast);
-  const addMessage = useStore((s) => s.addMessage);
-  const setCurrentPage = useStore((s) => s.setCurrentPage);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskName, setTaskName] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
 
+  // DAG orchestration state
+  const activeDAG = useStore((s) => s.activeDAG);
+  const setActiveDAG = useStore((s) => s.setActiveDAG);
+  const updateDAGNode = useStore((s) => s.updateDAGNode);
+  const taskProgress = useStore((s) => s.taskProgress);
+  const addTaskProgress = useStore((s) => s.addTaskProgress);
+  const clearTaskProgress = useStore((s) => s.clearTaskProgress);
+  const taskLoading = useStore((s) => s.taskLoading);
+  const setTaskLoading = useStore((s) => s.setTaskLoading);
+  const launchTaskAction = useStore((s) => s.launchTask);
+  const serverTasks = useStore((s) => s.serverTasks);
+  const loadTasks = useStore((s) => s.loadTasks);
+  const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const setSelectedNodeId = useStore((s) => s.setSelectedNodeId);
+
+  const progressRef = useRef<HTMLDivElement>(null);
+  const subscribedTaskRef = useRef<string | null>(null);
+
   const company = currentCompany;
   if (!company) return null;
 
-  const tasks = company.tasks || [];
-  const activeTask = tasks.find((t) => t.status === 'running');
+  // Load task history on mount
+  useEffect(() => {
+    loadTasks();
+  }, [company.id]);
 
-  const launchTask = () => {
+  // Socket.IO subscriptions
+  useEffect(() => {
+    const socket = getSocket();
+
+    const onDAGUpdate = (dag: TaskDAG) => {
+      setActiveDAG(dag);
+      if (dag.status === 'done' || dag.status === 'failed') {
+        setTaskLoading(false);
+        loadTasks();
+        if (dag.status === 'done') {
+          addToast('任务执行完成！');
+        } else {
+          addToast('任务执行失败', 'error');
+        }
+      }
+    };
+
+    const onStepUpdate = (data: { taskId: string; node: DAGNode }) => {
+      updateDAGNode(data.node);
+    };
+
+    const onProgress = (data: TaskProgressMessage) => {
+      addTaskProgress(data);
+    };
+
+    socket.on('task:dag-update', onDAGUpdate);
+    socket.on('task:step-update', onStepUpdate);
+    socket.on('task:progress', onProgress);
+
+    return () => {
+      socket.off('task:dag-update', onDAGUpdate);
+      socket.off('task:step-update', onStepUpdate);
+      socket.off('task:progress', onProgress);
+      // Unsubscribe from task room
+      if (subscribedTaskRef.current) {
+        socket.emit('task:unsubscribe', subscribedTaskRef.current);
+      }
+    };
+  }, []);
+
+  // Auto-scroll progress log
+  useEffect(() => {
+    if (progressRef.current) {
+      progressRef.current.scrollTop = progressRef.current.scrollHeight;
+    }
+  }, [taskProgress]);
+
+  const handleLaunchTask = async () => {
     const name = taskName.trim();
     if (!name) { addToast('请输入任务名称', 'error'); return; }
-    const employees = (company.employees || []).map((eid) => AGENTS_DB.find((a) => a.id === eid)).filter(Boolean) as Agent[];
-    if (employees.length === 0) { addToast('没有员工可分配', 'error'); return; }
+    if (company.employees.length === 0) { addToast('没有员工可分配，请先招聘', 'error'); return; }
 
-    const steps: TaskStep[] = [];
-    const pm = employees.find((a) => a.dept === '产品部');
-    const eng = employees.find((a) => a.dept === '工程部');
-    const design = employees.find((a) => a.dept === '设计部');
-    const market = employees.find((a) => a.dept === '市场部');
-    const ops = employees.find((a) => a.dept === '运营部');
-
-    const analyst = pm || employees[0];
-    steps.push({ id: 's1', label: '需求分析', agentId: analyst.id, status: 'running' });
-
-    const parallelItems: TaskStep[] = [];
-    if (eng) parallelItems.push({ id: 's2a', label: '技术方案', agentId: eng.id, status: 'pending' });
-    if (design) parallelItems.push({ id: 's2b', label: '设计方案', agentId: design.id, status: 'pending' });
-    if (parallelItems.length === 0 && employees.length > 1) {
-      parallelItems.push({ id: 's2a', label: '方案制定', agentId: employees[1].id, status: 'pending' });
-    }
-    if (parallelItems.length > 0) steps.push({ parallel: true, items: parallelItems });
-
-    const summarizer = market || ops || employees[employees.length - 1];
-    if (summarizer && summarizer.id !== analyst.id) {
-      steps.push({ id: 's3', label: '策略整合', agentId: summarizer.id, status: 'pending' });
-    }
-    steps.push({ id: 's4', label: '最终评审', agentId: analyst.id, status: 'pending' });
-
-    const task: Task = {
-      id: 'task_' + Date.now(),
-      name,
-      desc: taskDesc.trim(),
-      status: 'running',
-      created: Date.now(),
-      steps,
-      outputs: [],
-    };
-
-    const updatedTasks = [task, ...tasks];
-    updateCompany({ ...company, tasks: updatedTasks });
     setShowTaskModal(false);
+    clearTaskProgress();
+    setSelectedNodeId(null);
+
+    const socket = getSocket();
+
+    // Unsubscribe from previous task
+    if (subscribedTaskRef.current) {
+      socket.emit('task:unsubscribe', subscribedTaskRef.current);
+    }
+
+    const taskId = await launchTaskAction(name, taskDesc.trim());
+    if (taskId) {
+      subscribedTaskRef.current = taskId;
+      socket.emit('task:subscribe', taskId);
+      addToast('任务已发布，AI团队开始协作！');
+    }
+
     setTaskName('');
     setTaskDesc('');
-    addToast('任务已发布，AI团队开始协作！');
-
-    // Post to group chat
-    const chatKey = company.id + '_all';
-    addMessage(chatKey, {
-      self: false,
-      sender: '系统',
-      text: `新任务发布：${name}\n\n${taskDesc.trim()}\n\n已自动分配${steps.length}个执行步骤，AI团队开始协作...`,
-      color: '#8b5cf6',
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-    });
-
-    // Simulate DAG execution
-    simulateExecution(task, updatedTasks);
   };
 
-  const simulateExecution = (task: Task, allTasks: Task[]) => {
-    const flatSteps: TaskStep[] = [];
-    task.steps.forEach((s) => {
-      if (s.parallel && s.items) s.items.forEach((it) => flatSteps.push(it));
-      else flatSteps.push(s);
-    });
-
-    let idx = 0;
-    const advance = () => {
-      if (idx >= flatSteps.length) {
-        task.status = 'done';
-        task.outputs = flatSteps.map((s) => {
-          const agent = AGENTS_DB.find((a) => a.id === s.agentId);
-          return {
-            title: s.label || '',
-            agent: agent?.name || '未知',
-            text: `${s.label}分析完成。产出了完整的方案文档。`,
-            duration: (3 + Math.random() * 15).toFixed(1) + 's',
-            tokens: Math.floor(1000 + Math.random() * 4000),
-          };
-        });
-        updateCompany({ ...company, tasks: allTasks });
-        addToast('任务已完成！查看项目产出。');
-        return;
-      }
-      const step = flatSteps[idx];
-      step.status = 'running';
-      updateCompany({ ...company, tasks: allTasks });
-
-      setTimeout(() => {
-        step.status = 'done';
-        idx++;
-        updateCompany({ ...company, tasks: allTasks });
-        advance();
-      }, 2500 + Math.random() * 2000);
-    };
-    advance();
-  };
+  const selectedNode = activeDAG?.nodes.find((n) => n.id === selectedNodeId);
 
   return (
     <>
@@ -139,39 +134,106 @@ const WorkbenchPage: React.FC = () => {
         <div className="workbench-page">
           <div className="task-header">
             <h2>任务管理</h2>
-            <button className="task-publish-btn" onClick={() => setShowTaskModal(true)}>
-              <RocketIcon /> 发布任务
+            <button className="task-publish-btn" onClick={() => setShowTaskModal(true)} disabled={taskLoading}>
+              <RocketIcon /> {taskLoading ? '执行中...' : '发布任务'}
             </button>
           </div>
 
-          {activeTask && <DAGView task={activeTask} />}
+          {/* Planning indicator */}
+          {taskLoading && !activeDAG && (
+            <div className="dag-container fade-in" style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <div className="planning-spinner" />
+              <p style={{ marginTop: 16, color: '#8b8fa3', fontSize: 14 }}>正在使用AI分解任务，请稍候...</p>
+            </div>
+          )}
 
-          {tasks.length > 0 ? (
+          {/* Active DAG visualization */}
+          {activeDAG && (
+            <DAGView dag={activeDAG} onNodeClick={(nodeId) => setSelectedNodeId(nodeId === selectedNodeId ? null : nodeId)} selectedNodeId={selectedNodeId} />
+          )}
+
+          {/* Node detail panel */}
+          {selectedNode && (
+            <div className="node-detail-panel fade-in">
+              <div className="node-detail-header">
+                <h4>{selectedNode.label}</h4>
+                <span className={`node-status-badge ${selectedNode.status}`}>{
+                  { pending: '等待中', running: '执行中', done: '已完成', failed: '失败', skipped: '已跳过' }[selectedNode.status]
+                }</span>
+              </div>
+              <div className="node-detail-meta">
+                <span>执行者: {selectedNode.agentName}</span>
+                {selectedNode.metadata && (
+                  <>
+                    <span>耗时: {(selectedNode.metadata.duration / 1000).toFixed(1)}s</span>
+                    <span>模型: {selectedNode.metadata.model}</span>
+                    <span>Tokens: ~{selectedNode.metadata.tokens}</span>
+                  </>
+                )}
+              </div>
+              <div className="node-detail-prompt">
+                <strong>任务指令:</strong>
+                <pre>{selectedNode.taskPrompt}</pre>
+              </div>
+              {selectedNode.output && (
+                <div className="node-detail-output">
+                  <strong>输出结果:</strong>
+                  <pre>{selectedNode.output}</pre>
+                </div>
+              )}
+              {selectedNode.error && (
+                <div className="node-detail-error">
+                  <strong>错误信息:</strong>
+                  <pre>{selectedNode.error}</pre>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Progress log */}
+          {taskProgress.length > 0 && (
+            <div className="task-progress-log" ref={progressRef}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#646a73' }}>执行日志</h3>
+              {taskProgress.map((msg, i) => (
+                <div key={i} className="progress-entry">
+                  <span className="progress-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                  <span className="progress-agent">[{msg.agentName}]</span>
+                  <span className="progress-text">{msg.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Task history from server */}
+          {serverTasks.length > 0 && (
             <>
-              <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 8 }}>任务历史</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 16 }}>任务历史</h3>
               <div className="task-list">
-                {tasks.map((task) => {
-                  const iconColors: Record<string, string> = { running: 'rgba(51,112,255,.1)', done: 'rgba(52,199,89,.1)', failed: 'rgba(255,59,48,.1)' };
-                  const iconC: Record<string, string> = { running: '#3370ff', done: '#34c759', failed: '#ff3b30' };
-                  const statusLabels: Record<string, string> = { running: '执行中', done: '已完成', failed: '失败' };
+                {serverTasks.map((task: any) => {
+                  const statusMap: Record<string, string> = { pending: '待执行', running: '执行中', completed: '已完成', failed: '失败' };
+                  const iconColors: Record<string, string> = { running: 'rgba(51,112,255,.1)', completed: 'rgba(52,199,89,.1)', failed: 'rgba(255,59,48,.1)', pending: 'rgba(100,106,115,.1)' };
+                  const iconC: Record<string, string> = { running: '#3370ff', completed: '#34c759', failed: '#ff3b30', pending: '#646a73' };
                   return (
                     <div key={task.id} className="task-card">
-                      <div className="task-card-icon" style={{ background: iconColors[task.status] || iconColors.done }}>
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={iconC[task.status] || iconC.done} strokeWidth="2">
+                      <div className="task-card-icon" style={{ background: iconColors[task.status] || iconColors.pending }}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={iconC[task.status] || iconC.pending} strokeWidth="2">
                           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
                         </svg>
                       </div>
                       <div className="task-card-info">
                         <h4>{task.name}</h4>
-                        <p>{task.steps?.length || 0}个步骤 · {timeAgo(task.created)}</p>
+                        <p>{task.totalSteps || 0}个步骤 · {task.completedSteps || 0}已完成 · {timeAgo(task.createdAt)}</p>
                       </div>
-                      <span className={`task-card-status ${task.status}`}>{statusLabels[task.status] || task.status}</span>
+                      <span className={`task-card-status ${task.status}`}>{statusMap[task.status] || task.status}</span>
                     </div>
                   );
                 })}
               </div>
             </>
-          ) : (
+          )}
+
+          {/* Empty state */}
+          {!activeDAG && !taskLoading && serverTasks.length === 0 && (
             <div className="empty-state">
               <RocketIcon style={{ width: 64, height: 64, marginBottom: 16, opacity: 0.3 }} />
               <p>暂无任务，点击上方按钮发布你的第一个任务</p>
@@ -192,7 +254,7 @@ const WorkbenchPage: React.FC = () => {
           </div>
           <div className="modal-actions">
             <button className="btn-secondary" onClick={() => setShowTaskModal(false)}>取消</button>
-            <button className="btn-primary" onClick={launchTask}>发布任务</button>
+            <button className="btn-primary" onClick={handleLaunchTask}>发布任务</button>
           </div>
         </Modal>
       )}

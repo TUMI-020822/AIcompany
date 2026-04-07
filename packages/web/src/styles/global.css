@@ -422,6 +422,36 @@ a{text-decoration:none;color:inherit}
 .custom-agents-section{margin-top:24px;padding-top:20px;border-top:2px dashed var(--border-light)}
 .custom-agents-section h3{font-size:16px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
 
+/* ====== DAG Extensions (Phase 3) ====== */
+.dag-node.selected .dag-node-box{border-color:var(--accent);box-shadow:0 0 0 3px rgba(51,112,255,.2)}
+.dag-node-box.skipped{border-color:var(--text-tertiary);background:rgba(139,143,163,.06);opacity:.6}
+.dag-node-agent{font-size:10px;color:var(--text-tertiary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dag-node-meta{font-size:10px;color:var(--text-tertiary);margin-top:4px}
+
+.planning-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.node-detail-panel{background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;margin-top:12px;animation:fadeIn .3s ease}
+.node-detail-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.node-detail-header h4{font-size:15px;font-weight:700}
+.node-status-badge{font-size:11px;padding:2px 10px;border-radius:12px;font-weight:600}
+.node-status-badge.pending{background:rgba(100,106,115,.1);color:#646a73}
+.node-status-badge.running{background:rgba(51,112,255,.1);color:#3370ff}
+.node-status-badge.done{background:rgba(52,199,89,.1);color:#34c759}
+.node-status-badge.failed{background:rgba(255,59,48,.1);color:#ff3b30}
+.node-status-badge.skipped{background:rgba(139,143,163,.1);color:#8b8fa3}
+.node-detail-meta{display:flex;gap:16px;font-size:12px;color:var(--text-tertiary);margin-bottom:12px;flex-wrap:wrap}
+.node-detail-prompt,.node-detail-output,.node-detail-error{margin-top:10px}
+.node-detail-prompt strong,.node-detail-output strong,.node-detail-error strong{font-size:12px;color:var(--text-secondary);display:block;margin-bottom:4px}
+.node-detail-prompt pre,.node-detail-output pre,.node-detail-error pre{font-size:12px;line-height:1.6;background:var(--bg-secondary);padding:12px;border-radius:var(--radius-sm);white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;margin:0}
+.node-detail-error pre{background:rgba(255,59,48,.06);color:#ff3b30}
+
+.task-progress-log{background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;margin-top:12px;max-height:200px;overflow-y:auto;font-size:12px;line-height:1.8}
+.progress-entry{display:flex;gap:8px;align-items:baseline}
+.progress-time{color:var(--text-tertiary);font-family:monospace;white-space:nowrap}
+.progress-agent{color:var(--accent);font-weight:600;white-space:nowrap}
+.progress-text{color:var(--text-secondary)}
+
 /* ====== RESPONSIVE ====== */
 @media(max-width:768px){
   :root{--chat-list-w:0px;--sidebar-w:56px}

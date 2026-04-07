@@ -10,6 +10,42 @@ interface Toast {
   type: 'success' | 'error';
 }
 
+// DAG types matching the server
+export interface DAGNodeMeta {
+  tokens: number;
+  duration: number;
+  model: string;
+}
+
+export interface DAGNode {
+  id: string;
+  agentId: string;
+  agentName: string;
+  label: string;
+  taskPrompt: string;
+  dependencies: string[];
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  output?: string;
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+  metadata?: DAGNodeMeta;
+}
+
+export interface TaskDAG {
+  nodes: DAGNode[];
+  taskId: string;
+  taskName: string;
+  status: 'planning' | 'running' | 'done' | 'failed';
+}
+
+export interface TaskProgressMessage {
+  taskId: string;
+  message: string;
+  agentName: string;
+  timestamp: number;
+}
+
 interface AppState {
   // Companies
   companies: Company[];
@@ -36,9 +72,27 @@ interface AppState {
   addMessage: (key: string, msg: Message) => void;
   updateLastMessage: (key: string, text: string) => void;
 
-  // Tasks
+  // Tasks (legacy)
   tasks: Task[];
   setTasks: (tasks: Task[]) => void;
+
+  // DAG Orchestration
+  activeDAG: TaskDAG | null;
+  setActiveDAG: (dag: TaskDAG | null) => void;
+  updateDAGNode: (node: DAGNode) => void;
+  taskProgress: TaskProgressMessage[];
+  addTaskProgress: (msg: TaskProgressMessage) => void;
+  clearTaskProgress: () => void;
+  taskLoading: boolean;
+  setTaskLoading: (loading: boolean) => void;
+  selectedNodeId: string | null;
+  setSelectedNodeId: (nodeId: string | null) => void;
+
+  // Task actions
+  launchTask: (name: string, description: string) => Promise<string | null>;
+  loadTasks: () => Promise<void>;
+  serverTasks: any[];
+  setServerTasks: (tasks: any[]) => void;
 
   // Conversations
   conversations: Conversation[];
@@ -108,9 +162,7 @@ export const useStore = create<AppState>((set, get) => ({
   setCurrentCompany: (company) => set({ currentCompany: company }),
   enterCompany: async (id: string) => {
     try {
-      // Load company details
       const companyData = await api.getCompany(id);
-      // Load hired agents
       const hiredAgents = await api.getHiredAgents(id);
 
       const employees = hiredAgents.map((e: any) => e.agentId);
@@ -142,7 +194,6 @@ export const useStore = create<AppState>((set, get) => ({
       };
 
       set({ currentCompany: company });
-      // Also update in list
       get().updateCompany(company);
       return company;
     } catch (err) {
@@ -174,9 +225,58 @@ export const useStore = create<AppState>((set, get) => ({
       return { messages: { ...state.messages, [key]: updated } };
     }),
 
-  // Tasks
+  // Tasks (legacy)
   tasks: [],
   setTasks: (tasks) => set({ tasks }),
+
+  // DAG Orchestration
+  activeDAG: null,
+  setActiveDAG: (dag) => set({ activeDAG: dag }),
+  updateDAGNode: (node) =>
+    set((state) => {
+      if (!state.activeDAG) return state;
+      const nodes = state.activeDAG.nodes.map((n) => (n.id === node.id ? node : n));
+      return { activeDAG: { ...state.activeDAG, nodes } };
+    }),
+  taskProgress: [],
+  addTaskProgress: (msg) =>
+    set((state) => ({ taskProgress: [...state.taskProgress, msg] })),
+  clearTaskProgress: () => set({ taskProgress: [] }),
+  taskLoading: false,
+  setTaskLoading: (loading) => set({ taskLoading: loading }),
+  selectedNodeId: null,
+  setSelectedNodeId: (nodeId) => set({ selectedNodeId: nodeId }),
+
+  // Task actions
+  launchTask: async (name: string, description: string) => {
+    const company = get().currentCompany;
+    if (!company) return null;
+
+    set({ taskLoading: true, taskProgress: [], activeDAG: null, selectedNodeId: null });
+
+    try {
+      const result = await api.launchTask(company.id, { name, description });
+      // The DAG will be set via Socket.IO events
+      return result.taskId;
+    } catch (err) {
+      console.error('Failed to launch task:', err);
+      get().addToast(err instanceof Error ? err.message : 'Failed to launch task', 'error');
+      set({ taskLoading: false });
+      return null;
+    }
+  },
+  loadTasks: async () => {
+    const company = get().currentCompany;
+    if (!company) return;
+    try {
+      const tasks = await api.getTasks(company.id);
+      set({ serverTasks: tasks });
+    } catch (err) {
+      console.error('Failed to load tasks:', err);
+    }
+  },
+  serverTasks: [],
+  setServerTasks: (tasks) => set({ serverTasks: tasks }),
 
   // Conversations
   conversations: [],

@@ -86,6 +86,17 @@ export function createTask(companyId: string, data: { name: string; description:
   return request<any>(`/tasks/companies/${companyId}/tasks`, { method: 'POST', body: JSON.stringify(data) });
 }
 
+export function launchTask(companyId: string, data: { name: string; description: string }) {
+  return request<{ taskId: string; dag: any; message: string }>(`/tasks/companies/${companyId}/tasks/launch`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function getTask(taskId: string) {
+  return request<any>(`/tasks/tasks/${taskId}`);
+}
+
 // ====== Socket.IO Singleton ======
 let socket: Socket | null = null;
 
