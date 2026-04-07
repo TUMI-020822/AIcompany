@@ -120,7 +120,8 @@ interface AppState {
 
   // Toast
   toasts: Toast[];
-  addToast: (message: string, type?: 'success' | 'error') => void;
+  addToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info', suggestion?: string) => void;
+  dismissToast: (id: string) => void;
   removeToast: (id: string) => void;
 }
 
@@ -324,6 +325,6 @@ export const useStore = create<AppState>((set, get) => ({
     const timeout = type === 'error' ? 5000 : type === 'warning' ? 4000 : 3000;
     setTimeout(() => get().removeToast(id), timeout);
   },
-  dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
-  removeToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+  dismissToast: (id: string) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+  removeToast: (id: string) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 }));

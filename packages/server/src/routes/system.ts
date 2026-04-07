@@ -146,7 +146,7 @@ router.post('/gc', (req, res) => {
  * GET /api/system/config
  * 获取公开的配置信息
  */
-router.get('/config', (req, res) => {
+router.get('/config', async (req, res) => {
   const { config } = await import('../config.js');
   res.json({
     port: config.PORT,

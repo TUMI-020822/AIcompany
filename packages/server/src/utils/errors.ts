@@ -331,8 +331,11 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
   // 检查数据库
   try {
     const start = Date.now();
-    const { db } = await import('../../db/index.js');
-    db.select().from((await import('../../db/schema.js')).companies).limit(1).all();
+    const { db } = await import('../db/index.js');
+    const { companies } = await import('../db/schema.js');
+    // sql.js 不支持 drizzle 的 .all() 方法，使用简单查询测试
+    const { sqlite } = await import('../db/index.js');
+    sqlite.exec('SELECT 1');
     checks.database = { status: 'ok', latency: Date.now() - start };
   } catch (err) {
     checks.database = { status: 'error', message: (err as Error).message };

@@ -1,27 +1,47 @@
-import Database, { type Database as DatabaseType } from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { drizzle } from 'drizzle-orm/sql-js';
+import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
 import { config } from '../config.js';
 import * as schema from './schema.js';
 
-// Ensure the data directory exists
-const dbDir = path.dirname(config.DB_PATH);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+let db: ReturnType<typeof drizzle>;
+let sqlite: SqlJsDatabase;
+
+// Initialize database
+async function initializeDatabase() {
+  // Ensure the data directory exists
+  const dbDir = path.dirname(config.DB_PATH);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
+  // Initialize SQL.js
+  const SQL = await initSqlJs();
+
+  // Load existing database or create new one
+  const dbPath = config.DB_PATH;
+  if (fs.existsSync(dbPath)) {
+    const buffer = fs.readFileSync(dbPath);
+    sqlite = new SQL.Database(buffer);
+  } else {
+    sqlite = new SQL.Database();
+  }
+
+  // Create drizzle instance
+  db = drizzle(sqlite, { schema });
+
+  // Create tables
+  initializeTables();
+
+  // Save database to file
+  saveDatabase();
+
+  return { db, sqlite };
 }
 
-const sqlite: DatabaseType = new Database(config.DB_PATH);
-
-// Enable WAL mode for better concurrent read performance
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('foreign_keys = ON');
-
-export const db = drizzle(sqlite, { schema });
-
-// Auto-create tables on import
 function initializeTables() {
-  sqlite.exec(`
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS companies (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -29,8 +49,10 @@ function initializeTables() {
       description TEXT NOT NULL DEFAULT '',
       settings TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS agents_catalog (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -39,8 +61,10 @@ function initializeTables() {
       tags TEXT NOT NULL DEFAULT '[]',
       role TEXT NOT NULL DEFAULT '',
       system_prompt TEXT NOT NULL DEFAULT ''
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS company_employees (
       company_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
@@ -48,8 +72,10 @@ function initializeTables() {
       hired_at TEXT NOT NULL,
       PRIMARY KEY (company_id, agent_id),
       FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS custom_agents (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL,
@@ -60,8 +86,10 @@ function initializeTables() {
       system_prompt TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS chat_conversations (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL,
@@ -70,8 +98,10 @@ function initializeTables() {
       name TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
@@ -81,8 +111,10 @@ function initializeTables() {
       metadata TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL,
@@ -93,8 +125,10 @@ function initializeTables() {
       created_at TEXT NOT NULL,
       completed_at TEXT,
       FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS task_steps (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -107,8 +141,10 @@ function initializeTables() {
       started_at TEXT,
       completed_at TEXT,
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL,
@@ -117,11 +153,20 @@ function initializeTables() {
       base_url TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-    );
+    )
   `);
 }
 
-initializeTables();
+// Save database to file
+export function saveDatabase() {
+  const data = sqlite.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(config.DB_PATH, buffer);
+}
 
-export { sqlite };
-export type { DatabaseType };
+// Initialize and export
+const { db: database, sqlite: sqliteDb } = await initializeDatabase();
+export { database as db, sqliteDb as sqlite };
+
+// Export type
+export type DatabaseType = SqlJsDatabase;

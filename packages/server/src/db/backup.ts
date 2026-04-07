@@ -4,7 +4,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { sqlite, db } from './index.js';
+import { sqlite, saveDatabase } from './index.js';
 import { config } from '../config.js';
 
 const BACKUP_DIR = path.join(path.dirname(config.DB_PATH), 'backups');
@@ -38,12 +38,9 @@ export async function createBackup(type: 'auto' | 'manual' = 'manual'): Promise<
   const filename = `backup-${timestamp}.db`;
   const backupPath = path.join(BACKUP_DIR, filename);
 
-  // 使用 SQLite 的备份 API
-  await new Promise<void>((resolve, reject) => {
-    sqlite.backup(backupPath)
-      .then(() => resolve())
-      .catch(reject);
-  });
+  // 导出数据库到文件
+  const data = sqlite.export();
+  await fs.writeFile(backupPath, Buffer.from(data));
 
   const stats = await fs.stat(backupPath);
 
@@ -90,6 +87,7 @@ export async function listBackups(): Promise<BackupInfo[]> {
 
 /**
  * 从备份恢复数据库
+ * 注意：sql.js 不支持热恢复，需要重启服务器
  */
 export async function restoreBackup(filename: string): Promise<void> {
   const backupPath = path.join(BACKUP_DIR, filename);
@@ -101,20 +99,26 @@ export async function restoreBackup(filename: string): Promise<void> {
     throw new Error(`Backup file not found: ${filename}`);
   }
 
-  // 关闭当前数据库连接
-  sqlite.close();
-
   // 备份当前数据库
   const currentBackup = `${config.DB_PATH}.before-restore-${Date.now()}`;
-  await fs.copyFile(config.DB_PATH, currentBackup);
+  const currentData = sqlite.export();
+  await fs.writeFile(currentBackup, Buffer.from(currentData));
 
-  // 恢复备份
-  await fs.copyFile(backupPath, config.DB_PATH);
+  // 加载备份
+  const backupData = await fs.readFile(backupPath);
+  const SQL = (await import('sql.js')).default;
+  const SQL2 = await SQL();
+  const backupDb = new SQL2.Database(backupData);
+
+  // 替换当前数据库 - 通过重新初始化
+  sqlite.close();
+  
+  // 将备份数据写入主数据库文件
+  await fs.writeFile(config.DB_PATH, backupData);
 
   console.log(`[backup] Restored from ${filename}`);
   console.log(`[backup] Previous database backed up to ${currentBackup}`);
-
-  // 注意：恢复后需要重启服务器
+  console.log(`[backup] Please restart the server to use the restored database`);
 }
 
 /**
@@ -201,8 +205,8 @@ export async function checkDatabaseHealth(): Promise<{
 }> {
   try {
     // 检查完整性
-    const integrityResult = sqlite.pragma('integrity_check') as Array<{ integrity_check: string }>;
-    const integrity = integrityResult[0]?.integrity_check || 'unknown';
+    const integrityResult = sqlite.exec('PRAGMA integrity_check');
+    const integrity = integrityResult[0]?.values[0]?.[0] || 'unknown';
 
     // 获取各表记录数
     const tables = [
@@ -220,23 +224,29 @@ export async function checkDatabaseHealth(): Promise<{
     const counts: Record<string, number> = {};
     for (const table of tables) {
       try {
-        const result = sqlite.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
-        counts[table] = result.count;
+        const result = sqlite.exec(`SELECT COUNT(*) as count FROM ${table}`);
+        counts[table] = result[0]?.values[0]?.[0] as number || 0;
       } catch {
         counts[table] = -1;
       }
     }
 
     // 获取数据库文件大小
-    const stats = await fs.stat(config.DB_PATH);
+    let dbSize = 0;
+    try {
+      const stats = await fs.stat(config.DB_PATH);
+      dbSize = stats.size;
+    } catch {
+      // 文件可能还不存在
+    }
 
     return {
       status: integrity === 'ok' ? 'ok' : 'error',
       message: integrity === 'ok' ? 'Database is healthy' : `Integrity check failed: ${integrity}`,
       stats: {
         tables: counts,
-        dbSize: stats.size,
-        integrity,
+        dbSize,
+        integrity: integrity as string,
       },
     };
   } catch (err) {
