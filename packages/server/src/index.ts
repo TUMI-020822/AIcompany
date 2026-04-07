@@ -15,12 +15,18 @@ import companiesRouter from './routes/companies.js';
 import agentsRouter from './routes/agents.js';
 import chatRouter from './routes/chat.js';
 import { createTasksRouter } from './routes/tasks.js';
+import mcpRouter from './routes/mcp.js';
+import skillsRouter from './routes/skills.js';
+import { createAutoAgentRouter } from './routes/autoagent.js';
 
 // Import chat service for socket handlers
 import { sendMessage } from './services/chat.js';
 
 // Import orchestrator for socket handlers
 import { launchTask } from './services/orchestrator/index.js';
+
+// Import MCP manager for socket handlers
+import { mcpManager } from './services/mcp/manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +51,9 @@ app.use('/api/companies', companiesRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/tasks', createTasksRouter(io));
+app.use('/api/mcp', mcpRouter);
+app.use('/api/skills', skillsRouter);
+app.use('/api/autoagent', createAutoAgentRouter(io));
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -166,6 +175,65 @@ io.on('connection', (socket) => {
         message: err instanceof Error ? err.message : 'Failed to launch task',
       });
     }
+  });
+
+  // ── MCP Socket Events ────────────────────────────────────────────────────
+
+  socket.on('mcp:start', async (data: { serverId: string; env?: Record<string, string> }) => {
+    try {
+      const server = await mcpManager.startServer(data.serverId, data.env);
+      socket.emit('mcp:started', {
+        id: server.id,
+        name: server.config.name,
+        status: server.status,
+        tools: server.tools.map((t) => ({ name: t.name, description: t.description })),
+      });
+    } catch (err) {
+      socket.emit('mcp:error', {
+        serverId: data.serverId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  socket.on('mcp:stop', async (data: { serverId: string }) => {
+    try {
+      await mcpManager.stopServer(data.serverId);
+      socket.emit('mcp:stopped', { serverId: data.serverId });
+    } catch (err) {
+      socket.emit('mcp:error', {
+        serverId: data.serverId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  socket.on('mcp:call-tool', async (data: { serverId: string; toolName: string; args?: Record<string, unknown> }) => {
+    try {
+      const result = await mcpManager.callTool(data.serverId, data.toolName, data.args || {});
+      socket.emit('mcp:tool-result', {
+        serverId: data.serverId,
+        toolName: data.toolName,
+        result,
+      });
+    } catch (err) {
+      socket.emit('mcp:error', {
+        serverId: data.serverId,
+        toolName: data.toolName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  // ── AutoAgent Socket Events ──────────────────────────────────────────────
+
+  socket.on('autoagent:subscribe', (agentId: string) => {
+    socket.join(`autoagent:${agentId}`);
+    console.log(`[socket] ${socket.id} subscribed to autoagent:${agentId}`);
+  });
+
+  socket.on('autoagent:unsubscribe', (agentId: string) => {
+    socket.leave(`autoagent:${agentId}`);
   });
 
   socket.on('disconnect', () => {

@@ -97,6 +97,64 @@ export function getTask(taskId: string) {
   return request<any>(`/tasks/tasks/${taskId}`);
 }
 
+// ── MCP ──────────────────────────────────────────────────────────────────────
+export function getMCPServers() {
+  return request<any[]>('/mcp/servers');
+}
+
+export function getMCPStatus() {
+  return request<{ servers: any[]; totalRunning: number }>('/mcp/status');
+}
+
+export function startMCPServer(serverId: string, env?: Record<string, string>) {
+  return request<any>(`/mcp/servers/${serverId}/start`, { method: 'POST', body: JSON.stringify({ env }) });
+}
+
+export function stopMCPServer(serverId: string) {
+  return request<any>(`/mcp/servers/${serverId}/stop`, { method: 'POST' });
+}
+
+export function getMCPServerTools(serverId: string) {
+  return request<any>(`/mcp/servers/${serverId}/tools`);
+}
+
+export function callMCPTool(serverId: string, toolName: string, args: Record<string, unknown> = {}) {
+  return request<any>(`/mcp/servers/${serverId}/tools/${toolName}/call`, {
+    method: 'POST',
+    body: JSON.stringify({ args }),
+  });
+}
+
+// ── Skills ───────────────────────────────────────────────────────────────────
+export function getSkills() {
+  return request<any[]>('/skills');
+}
+
+export function executeSkill(skillId: string, params: Record<string, unknown> = {}) {
+  return request<any>(`/skills/${skillId}/execute`, { method: 'POST', body: JSON.stringify(params) });
+}
+
+// ── AutoAgent ────────────────────────────────────────────────────────────────
+export function startOptimization(data: {
+  agentId: string;
+  agentName?: string;
+  systemPrompt?: string;
+  programMd?: string;
+  benchmarkTasks?: string;
+  criteria?: string;
+  iterations?: number;
+  provider: string;
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}) {
+  return request<any>('/autoagent/optimize', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function getOptimizationStatus(agentId: string) {
+  return request<any>(`/autoagent/status/${agentId}`);
+}
+
 // ====== Socket.IO Singleton ======
 let socket: Socket | null = null;
 
