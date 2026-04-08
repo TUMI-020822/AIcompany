@@ -2,6 +2,7 @@ import React from 'react';
 import { DEPT_COLORS, PROVIDERS } from '../../types';
 import type { Agent, AgentConfig } from '../../types';
 import { SettingsIcon } from '../shared/Icons';
+import { useStore } from '../../store';
 
 interface Props {
   agent: Agent;
@@ -13,7 +14,10 @@ interface Props {
 }
 
 const AgentCard: React.FC<Props> = ({ agent, isHired, config, onHire, onConfig, onProfile }) => {
-  const color = DEPT_COLORS[agent.dept] || '#3370ff';
+  // Support custom department colors from company settings
+  const currentCompany = useStore ? useStore((s: any) => s.currentCompany) : null;
+  const customDeptColor = currentCompany?.customDepts?.find((d: any) => d.name === agent.dept)?.color;
+  const color = customDeptColor || DEPT_COLORS[agent.dept] || '#3370ff';
 
   return (
     <div className="agent-card">

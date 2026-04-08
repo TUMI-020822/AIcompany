@@ -3,6 +3,8 @@ import { useStore } from '../../store';
 import { DEPT_COLORS, PROVIDERS } from '../../types';
 import type { Agent } from '../../types';
 import AgentCard from './AgentCard';
+import CreateDeptModal from './CreateDeptModal';
+import CreateCustomAgentModal from './CreateCustomAgentModal';
 import * as api from '../../services/api';
 
 const HirePage: React.FC = () => {
@@ -15,6 +17,8 @@ const HirePage: React.FC = () => {
   const setConfigModalAgent = useStore((s) => s.setConfigModalAgent);
   const setProfileDrawerAgent = useStore((s) => s.setProfileDrawerAgent);
   const [hiringId, setHiringId] = useState<string | null>(null);
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [showAgentModal, setShowAgentModal] = useState(false);
 
   const company = currentCompany;
   if (!company) return null;
@@ -83,8 +87,8 @@ const HirePage: React.FC = () => {
                 从{agents.length}+专业角色中选择，组建你的AI团队。已聘用 {(company.employees || []).length} 人。
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn-secondary" style={{ fontSize: 13, padding: '7px 14px' }}>+ 新建部门</button>
-                <button className="btn-primary" style={{ fontSize: 13, padding: '7px 14px' }}>+ 自定义员工</button>
+                <button className="btn-secondary" style={{ fontSize: 13, padding: '7px 14px' }} onClick={() => setShowDeptModal(true)}>+ 新建部门</button>
+                <button className="btn-primary" style={{ fontSize: 13, padding: '7px 14px' }} onClick={() => setShowAgentModal(true)}>+ 自定义员工</button>
               </div>
             </div>
           </div>
@@ -116,6 +120,9 @@ const HirePage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showDeptModal && <CreateDeptModal onClose={() => setShowDeptModal(false)} />}
+      {showAgentModal && <CreateCustomAgentModal onClose={() => setShowAgentModal(false)} />}
     </>
   );
 };

@@ -60,6 +60,12 @@ function initializeTables() {
       description TEXT NOT NULL DEFAULT '',
       tags TEXT NOT NULL DEFAULT '[]',
       role TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT 'deepseek-chat',
+      skills TEXT NOT NULL DEFAULT '[]',
+      mcp_tools TEXT NOT NULL DEFAULT '[]',
+      self_improve INTEGER NOT NULL DEFAULT 1,
+      program_md TEXT NOT NULL DEFAULT '',
+      benchmark TEXT NOT NULL DEFAULT '',
       system_prompt TEXT NOT NULL DEFAULT ''
     )
   `);

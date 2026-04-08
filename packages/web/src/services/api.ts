@@ -32,6 +32,44 @@ export function getCompany(id: string) {
   return request<any>(`/companies/${id}`);
 }
 
+// ── Custom Departments ──────────────────────────────────────────────────────────
+export function getDepartments(companyId: string) {
+  return request<{ name: string; color: string }[]>(`/companies/${companyId}/depts`);
+}
+
+export function addDepartment(companyId: string, data: { name: string; color?: string }) {
+  return request<any>(`/companies/${companyId}/depts`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function removeDepartment(companyId: string, deptName: string) {
+  return request<void>(`/companies/${companyId}/depts/${encodeURIComponent(deptName)}`, {
+    method: 'DELETE',
+  });
+}
+
+// ── Custom Agents ──────────────────────────────────────────────────────────────
+export function createCustomAgent(companyId: string, data: {
+  name: string;
+  dept?: string;
+  description?: string;
+  tags?: string[];
+  systemPrompt?: string;
+}) {
+  return request<any>(`/agents/companies/${companyId}/custom-agents`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteCustomAgent(companyId: string, agentId: string) {
+  return request<void>(`/agents/companies/${companyId}/custom-agents/${agentId}`, {
+    method: 'DELETE',
+  });
+}
+
 // ── Agent Catalog ──────────────────────────────────────────────────────────
 export function getCatalog(companyId?: string) {
   const qs = companyId ? `?companyId=${companyId}` : '';

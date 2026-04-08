@@ -123,4 +123,93 @@ router.delete('/:id', (req: Request, res: Response) => {
   }
 });
 
+// ── Custom Departments ──────────────────────────────────────────────────────
+// GET /:id/depts - get custom departments
+router.get('/:id/depts', (req: Request, res: Response) => {
+  try {
+    const company = db.select().from(companies).where(eq(companies.id, req.params.id)).get();
+    if (!company) {
+      res.status(404).json({ error: 'Company not found' });
+      return;
+    }
+    const settings = (company.settings as Record<string, unknown>) || {};
+    const customDepts = (settings.customDepts as Array<{ name: string; color: string }>) || [];
+    res.json(customDepts);
+  } catch (err) {
+    console.error('[companies] get depts error:', err);
+    res.status(500).json({ error: 'Failed to get departments' });
+  }
+});
+
+// POST /:id/depts - add a custom department
+router.post('/:id/depts', (req: Request, res: Response) => {
+  try {
+    const { name, color } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ error: 'Department name is required' });
+      return;
+    }
+
+    const company = db.select().from(companies).where(eq(companies.id, req.params.id)).get();
+    if (!company) {
+      res.status(404).json({ error: 'Company not found' });
+      return;
+    }
+
+    const settings = (company.settings as Record<string, unknown>) || {};
+    const customDepts = (settings.customDepts as Array<{ name: string; color: string }>) || [];
+    
+    // Check for duplicate
+    if (customDepts.some(d => d.name === name.trim())) {
+      res.status(409).json({ error: 'Department already exists' });
+      return;
+    }
+
+    customDepts.push({ name: name.trim(), color: color || '#6366f1' });
+    settings.customDepts = customDepts;
+
+    db.update(companies)
+      .set({ settings })
+      .where(eq(companies.id, req.params.id))
+      .run();
+
+    res.status(201).json({ name: name.trim(), color: color || '#6366f1' });
+  } catch (err) {
+    console.error('[companies] add dept error:', err);
+    res.status(500).json({ error: 'Failed to add department' });
+  }
+});
+
+// DELETE /:id/depts/:deptName - remove a custom department
+router.delete('/:id/depts/:deptName', (req: Request, res: Response) => {
+  try {
+    const company = db.select().from(companies).where(eq(companies.id, req.params.id)).get();
+    if (!company) {
+      res.status(404).json({ error: 'Company not found' });
+      return;
+    }
+
+    const settings = (company.settings as Record<string, unknown>) || {};
+    const customDepts = (settings.customDepts as Array<{ name: string; color: string }>) || [];
+    const deptName = decodeURIComponent(req.params.deptName);
+    const filtered = customDepts.filter(d => d.name !== deptName);
+
+    if (filtered.length === customDepts.length) {
+      res.status(404).json({ error: 'Department not found' });
+      return;
+    }
+
+    settings.customDepts = filtered;
+    db.update(companies)
+      .set({ settings })
+      .where(eq(companies.id, req.params.id))
+      .run();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[companies] delete dept error:', err);
+    res.status(500).json({ error: 'Failed to delete department' });
+  }
+});
+
 export default router;

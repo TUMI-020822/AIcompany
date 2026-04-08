@@ -18,6 +18,18 @@ export const agentsCatalog = sqliteTable('agents_catalog', {
   description: text('description').notNull().default(''),
   tags: text('tags', { mode: 'json' }).$type<string[]>().default([]),
   role: text('role').notNull().default(''),
+  // 模型配置
+  model: text('model').notNull().default('deepseek-chat'),
+  // 技能列表（对应可用 skills）
+  skills: text('skills', { mode: 'json' }).$type<string[]>().default([]),
+  // MCP 工具列表
+  mcpTools: text('mcp_tools', { mode: 'json' }).$type<string[]>().default([]),
+  // 自优化默认开启
+  selfImprove: integer('self_improve').notNull().default(1), // boolean as int
+  // Program.md 指令
+  programMd: text('program_md').notNull().default(''),
+  // 基准测试任务
+  benchmark: text('benchmark').notNull().default(''),
   systemPrompt: text('system_prompt').notNull().default(''),
 });
 

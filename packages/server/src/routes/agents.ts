@@ -232,4 +232,77 @@ router.get('/companies/:companyId/agents', (req: Request, res: Response) => {
   }
 });
 
+// POST /companies/:companyId/custom-agents - create a custom agent
+router.post('/companies/:companyId/custom-agents', (req: Request, res: Response) => {
+  try {
+    const { companyId } = req.params;
+    const { name, dept, description, tags, systemPrompt } = req.body;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ error: 'Agent name is required' });
+      return;
+    }
+
+    // Verify company exists
+    const company = db.select().from(companies).where(eq(companies.id, companyId)).get();
+    if (!company) {
+      res.status(404).json({ error: 'Company not found' });
+      return;
+    }
+
+    const id = nanoid();
+    const now = new Date().toISOString();
+    const parsedTags = Array.isArray(tags) ? tags : (tags ? [tags] : []);
+
+    db.insert(customAgents).values({
+      id,
+      companyId,
+      name: name.trim(),
+      dept: dept?.trim() || '',
+      description: description?.trim() || '',
+      tags: parsedTags,
+      systemPrompt: systemPrompt?.trim() || '',
+      createdAt: now,
+    }).run();
+
+    const agent = db.select().from(customAgents).where(eq(customAgents.id, id)).get();
+    res.status(201).json({
+      id: agent!.id,
+      name: agent!.name,
+      dept: agent!.dept,
+      description: agent!.description,
+      tags: agent!.tags,
+      role: 'custom',
+      systemPrompt: agent!.systemPrompt,
+    });
+  } catch (err) {
+    console.error('[agents] create custom agent error:', err);
+    res.status(500).json({ error: 'Failed to create custom agent' });
+  }
+});
+
+// DELETE /companies/:companyId/custom-agents/:agentId - delete a custom agent
+router.delete('/companies/:companyId/custom-agents/:agentId', (req: Request, res: Response) => {
+  try {
+    const { companyId, agentId } = req.params;
+
+    const existing = db.select().from(customAgents)
+      .where(and(eq(customAgents.id, agentId), eq(customAgents.companyId, companyId))).get();
+
+    if (!existing) {
+      res.status(404).json({ error: 'Custom agent not found' });
+      return;
+    }
+
+    db.delete(customAgents)
+      .where(and(eq(customAgents.id, agentId), eq(customAgents.companyId, companyId)))
+      .run();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[agents] delete custom agent error:', err);
+    res.status(500).json({ error: 'Failed to delete custom agent' });
+  }
+});
+
 export default router;
